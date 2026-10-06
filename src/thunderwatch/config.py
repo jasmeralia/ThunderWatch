@@ -72,3 +72,11 @@ class Config:
             automatic_updates=_setting_bool(store.value("updates/automatic", True), True),
             include_beta=_setting_bool(store.value("updates/include_beta", False), False),
         )
+
+
+def smtp_identity_changed(previous: Config, updated: Config) -> bool:
+    """Whether a saved SMTP password would be looked up under a new key."""
+    return (
+        previous.smtp_username.strip(),
+        previous.smtp_host.strip(),
+    ) != (updated.smtp_username.strip(), updated.smtp_host.strip())

@@ -256,6 +256,34 @@ def test_secret_read_returns_none_when_backend_and_fallback_are_unavailable(monk
     assert secrets.read_password("user", "host", tmp_path / "missing") is None
 
 
+def test_keyring_read_failure_does_not_use_stale_password_file(monkeypatch, tmp_path):
+    class BrokenKeyring:
+        def get_keyring(self):
+            return object()
+
+        def get_password(self, *_args):
+            raise RuntimeError("keyring locked")
+
+    fallback = tmp_path / "password"
+    fallback.write_text("stale-secret", encoding="utf-8")
+    monkeypatch.setattr(secrets, "_keyring", BrokenKeyring)
+    assert secrets.read_password("user", "host", fallback) is None
+
+
+def test_healthy_keyring_missing_entry_can_use_opted_in_file_fallback(monkeypatch, tmp_path):
+    class EmptyKeyring:
+        def get_keyring(self):
+            return object()
+
+        def get_password(self, *_args):
+            return None
+
+    fallback = tmp_path / "password"
+    fallback.write_text("file-secret", encoding="utf-8")
+    monkeypatch.setattr(secrets, "_keyring", EmptyKeyring)
+    assert secrets.read_password("user", "host", fallback) == "file-secret"
+
+
 def test_worker_runs_fake_lookup_and_delivery_and_persists_after_acceptance(monkeypatch):
     persisted = []
     monkeypatch.setattr("thunderwatch.worker.state_path", lambda: Path("synthetic-state.json"))
@@ -313,6 +341,16 @@ def test_scheduler_partial_result_uses_retry_backoff_without_network():
     scheduler.timer.stop()
 
 
+def test_scheduler_coalesces_check_requested_while_running():
+    scheduler = Scheduler(Config(interval_minutes=10))
+    scheduler.running = True
+    scheduler.run()
+    assert scheduler._run_requested
+    scheduler.done({"last_check": {"result": "success"}}, [])
+    assert scheduler.timer.interval() == 0
+    scheduler.timer.stop()
+
+
 def test_app_data_paths_and_frozen_resource_location(tmp_path, monkeypatch):
     monkeypatch.setattr("sys._MEIPASS", str(tmp_path), raising=False)
     assert resource_path("icons/test.png") == tmp_path / "resources/icons/test.png"
@@ -325,7 +363,7 @@ def test_linux_autostart_creates_and_removes_desktop_entry(tmp_path, monkeypatch
     monkeypatch.delenv("SNAP", raising=False)
     set_autostart(True, "/opt/Thunder Watch/thunderwatch")
     desktop = tmp_path / "autostart/thunderwatch.desktop"
-    assert "Exec='/opt/Thunder Watch/thunderwatch' --autostart" in desktop.read_text()
+    assert 'Exec="/opt/Thunder Watch/thunderwatch" --autostart' in desktop.read_text()
     set_autostart(False)
     assert not desktop.exists()
 

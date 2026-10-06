@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .autostart import set_autostart
-from .config import Config
+from .config import Config, smtp_identity_changed
 from .monitor import _stamp
 from .paths import password_path, state_path
 from .secrets import store_password
@@ -223,6 +223,18 @@ class SetupWizard(QWizard):
             return
         if not self.password.text() and not self.settings.value("setup/complete", False):
             QMessageBox.warning(self, "Password required", "Enter the SMTP password.")
+            return
+        previous = Config.from_store(self.settings)
+        updated = Config(
+            smtp_host=self.host.text().strip(),
+            smtp_username=self.username.text().strip(),
+        )
+        if smtp_identity_changed(previous, updated) and not self.password.text():
+            QMessageBox.warning(
+                self,
+                "Password required",
+                "Enter the password for the new SMTP account.",
+            )
             return
         values = {
             "setup/complete": True,

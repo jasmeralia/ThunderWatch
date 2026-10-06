@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import shlex
 import sys
 from pathlib import Path
 from typing import Any, Protocol
@@ -34,11 +33,21 @@ class QtBackgroundPortal:
 
 
 def desktop_file(executable: str, appimage: str | None = None) -> str:
-    command = f'"{appimage}" --autostart' if appimage else f"{shlex.quote(executable)} --autostart"
+    command = (
+        f"{_desktop_argument(appimage)} --autostart"
+        if appimage
+        else (f"{_desktop_argument(executable)} --autostart")
+    )
     return (
         "[Desktop Entry]\nType=Application\nName=ThunderWatch\n"
         f"Exec={command}\nX-GNOME-Autostart-enabled=true\n"
     )
+
+
+def _desktop_argument(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    escaped = escaped.replace("$", "\\$").replace("`", "\\`").replace("%", "%%")
+    return f'"{escaped}"'
 
 
 def set_autostart(

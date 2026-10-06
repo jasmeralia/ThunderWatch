@@ -110,6 +110,8 @@ class UpdateDialog(QDialog):
         folder = app_data() / "updates"
         folder.mkdir(parents=True, exist_ok=True)
         destination = folder / self.offer.asset.name
+        destination.unlink(missing_ok=True)
+        destination.with_suffix(".update.sh").unlink(missing_ok=True)
         self.download_button.setEnabled(False)
         self.status_label.setText("Downloading and verifying update…")
         self.worker = UpdateDownloadWorker(self.offer, destination)

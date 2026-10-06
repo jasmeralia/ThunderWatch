@@ -49,11 +49,16 @@ def store_password(
 
 def read_password(username: str, host: str, fallback: Path | None = None) -> str | None:
     try:
-        result = _keyring().get_password(SERVICE, f"{username}@{host}")
-        if result:
-            return cast(str, result)
+        keyring = _keyring()
     except Exception:
-        pass
+        keyring = None
+    if keyring is not None and keyring_available():
+        try:
+            result = keyring.get_password(SERVICE, f"{username}@{host}")
+            if result:
+                return cast(str, result)
+        except Exception:
+            return None
     try:
         return fallback.read_text(encoding="utf-8") if fallback and fallback.exists() else None
     except OSError:

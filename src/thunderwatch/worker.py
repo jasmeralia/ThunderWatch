@@ -12,7 +12,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
 
 from .config import Config
 from .ipcheck import lookup
-from .monitor import apply_delivery, apply_lookup
+from .monitor import apply_delivery, apply_lookup, discard_pending_families
 from .notifier import compose_email, send_email
 from .paths import password_path, state_path
 from .secrets import read_password
@@ -35,6 +35,8 @@ class CheckWorker(QObject):
         actions: list[dict[str, Any]] = [{"type": "retry"}]
         try:
             state = read_state(state_path())
+            if not self.config.ipv6:
+                state = discard_pending_families(state, {"ipv6"})
             results = {}
             for family in ("ipv4", "ipv6"):
                 if family == "ipv6" and not self.config.ipv6:

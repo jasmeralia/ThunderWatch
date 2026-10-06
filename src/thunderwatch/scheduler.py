@@ -18,6 +18,7 @@ class Scheduler(QObject):
         self.config = config
         self.failures = 0
         self.running = False
+        self._run_requested = False
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.run)
@@ -32,10 +33,12 @@ class Scheduler(QObject):
             self.schedule(config.interval_minutes)
 
     def schedule(self, minutes: int | None = None) -> None:
-        self.timer.start((minutes or self.config.interval_minutes) * 60_000)
+        delay = self.config.interval_minutes if minutes is None else minutes
+        self.timer.start(delay * 60_000)
 
     def run(self) -> None:
         if self.running:
+            self._run_requested = True
             return
         self.timer.stop()
         self.running = True
@@ -58,8 +61,13 @@ class Scheduler(QObject):
 
     def done(self, state: dict[str, Any], actions: list[dict[str, Any]]) -> None:
         self.running = False
+        run_requested = self._run_requested
+        self._run_requested = False
         failed = state.get("last_check", {}).get("result") != "success"
         self.failures = self.failures + 1 if failed else 0
         self.state_changed.emit(state, actions)
         delay = min(2 ** max(self.failures - 1, 0), 8) if failed else self.config.interval_minutes
-        self.schedule(min(delay, self.config.interval_minutes))
+        if run_requested:
+            self.timer.start(0)
+        else:
+            self.schedule(min(delay, self.config.interval_minutes))

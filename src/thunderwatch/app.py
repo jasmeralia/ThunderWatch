@@ -58,6 +58,13 @@ def pending_balloon_transition(was_pending: bool, is_pending: bool) -> bool:
     return is_pending and not was_pending
 
 
+def schedule_automatic_update(timer: QTimer, enabled: bool, delay_ms: int = 30_000) -> None:
+    if not enabled:
+        timer.stop()
+    elif not timer.isActive():
+        timer.start(delay_ms)
+
+
 def claim_local_server(
     server: QLocalServer,
     name: str,
@@ -252,6 +259,9 @@ class ThunderWatchApp:
         self._tray_timer = QTimer()
         self._tray_timer.setInterval(1000)
         self._tray_timer.timeout.connect(self._poll_tray)
+        self._automatic_update_timer = QTimer()
+        self._automatic_update_timer.setSingleShot(True)
+        self._automatic_update_timer.timeout.connect(self._automatic_update_check)
         self.server = QLocalServer()
         name = f"thunderwatch-{os.getuid() if hasattr(os, 'getuid') else 'user'}"
         if not claim_local_server(
@@ -313,8 +323,7 @@ class ThunderWatchApp:
             QTimer.singleShot(0, self.show_status)
         self._tray_timer.start()
         self._poll_tray()
-        if config.automatic_updates:
-            QTimer.singleShot(30_000, self._automatic_update_check)
+        schedule_automatic_update(self._automatic_update_timer, config.automatic_updates)
 
     def _poll_tray(self) -> None:
         state = tray_wait_state(QSystemTrayIcon.isSystemTrayAvailable(), self._tray_elapsed)
@@ -375,7 +384,11 @@ class ThunderWatchApp:
     def _automatic_update_check(self) -> None:
         if self._automatic_updates:
             self.check_for_updates(False)
-        QTimer.singleShot(24 * 60 * 60 * 1000, self._automatic_update_check)
+            schedule_automatic_update(
+                self._automatic_update_timer,
+                True,
+                24 * 60 * 60 * 1000,
+            )
 
     def check_for_updates(self, manual: bool = True) -> None:
         if self._update_thread and self._update_thread.isRunning():
@@ -461,8 +474,7 @@ class ThunderWatchApp:
             if self.scheduler:
                 self.scheduler.reconfigure(config)
             self._automatic_updates = config.automatic_updates
-            if config.automatic_updates:
-                QTimer.singleShot(30_000, self._automatic_update_check)
+            schedule_automatic_update(self._automatic_update_timer, config.automatic_updates)
             if self.tray:
                 self.tray.setToolTip(f"ThunderWatch - {config.location}")
 

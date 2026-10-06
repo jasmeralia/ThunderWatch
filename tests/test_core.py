@@ -144,6 +144,48 @@ def test_desktop_autostart_uses_appimage_path():
     assert 'Exec="/home/user/ThunderWatch.AppImage" --autostart' in desktop
 
 
+def test_desktop_autostart_escapes_desktop_entry_arguments():
+    from thunderwatch.autostart import desktop_file
+
+    desktop = desktop_file('/opt/Thunder "Watch" 100%/app')
+    assert 'Exec="/opt/Thunder \\"Watch\\" 100%%/app" --autostart' in desktop
+
+
+def test_disabled_ipv6_is_removed_from_pending_changes_without_mutating_state():
+    from thunderwatch.monitor import discard_pending_families
+
+    state = empty_state()
+    state["pending"] = {
+        "changes": {
+            "ipv4": {"old": "1.1.1.1", "new": "8.8.8.8"},
+            "ipv6": {"old": "2001:db8::1", "new": "2001:db8::2"},
+        },
+        "last_error": "temporary SMTP failure",
+    }
+    result = discard_pending_families(state, {"ipv6"})
+    assert set(result["pending"]["changes"]) == {"ipv4"}
+    assert result["pending"]["last_error"] == "temporary SMTP failure"
+    assert "ipv6" in state["pending"]["changes"]
+
+
+def test_disabling_only_pending_family_clears_pending_state():
+    from thunderwatch.monitor import discard_pending_families
+
+    state = empty_state()
+    state["pending"] = {"changes": {"ipv6": {"old": None, "new": "2001:db8::2"}}}
+    assert discard_pending_families(state, {"ipv6"})["pending"] == {}
+
+
+def test_smtp_identity_change_requires_replacement_password():
+    from thunderwatch.config import Config, smtp_identity_changed
+
+    original = Config(smtp_host="smtp.example", smtp_username="alerts")
+    unchanged = Config(smtp_host="smtp.example", smtp_username="alerts")
+    assert not smtp_identity_changed(original, unchanged)
+    assert smtp_identity_changed(original, Config(smtp_host="smtp.other", smtp_username="alerts"))
+    assert smtp_identity_changed(original, Config(smtp_host="smtp.example", smtp_username="other"))
+
+
 def test_smtp_refused_recipient_is_failure():
     from email.message import EmailMessage
 

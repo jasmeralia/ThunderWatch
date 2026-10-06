@@ -5,10 +5,10 @@ Reviewed revision: `8864777` (`feat/implement-thunderwatch`)
 Reviewers: Claude Opus 5.5 High and Cursor Grok 4.7 High
 
 The reviews were read-only. Findings are consolidated below; severity and reviewer
-attribution are retained where the reviews differed. Critical and High items have
-regression tests and implementation fixes in the current working tree. Other findings
-remain open unless marked otherwise. Verification after the fixes: `make lint` passed;
-`make test` passed with 118 tests and 81% total coverage.
+attribution are retained where the reviews differed. Critical, High, and Medium findings
+listed as fixed have regression tests and implementation fixes. Low findings remain
+open. Verification after the fixes: `make lint` passed; `make test` passed with 129 tests
+and 82% total coverage.
 
 ## Critical and High findings
 
@@ -60,35 +60,36 @@ remain open unless marked otherwise. Verification after the fixes: `make lint` p
 
 9. **SMTP account changes can leave the password unavailable** (Opus). The secret is
    keyed by username and host; changing either without entering a replacement password
-   can fail on the next notification. `src/thunderwatch/settings_dialog.py:173-200` and
-   `src/thunderwatch/worker.py:41-45`. **Open.**
+   can fail on the next notification. **Status: fixed.** Settings and setup reruns now
+   require a password before saving a changed SMTP identity.
 
 10. **Saving Settings can create another recurring update-check chain** (Opus). Each
-    accepted save with automatic updates schedules another delayed check.
-    `src/thunderwatch/app.py:335-338,415-416`. **Open.**
+   accepted save with automatic updates schedules another delayed check. **Status:
+   fixed.** One retained single-shot timer is stopped or armed as the setting changes,
+   preventing duplicate recurring chains.
 
 11. **Pending IPv6 changes can remain after IPv6 is disabled** (Opus). Disabling the
-    family does not clear its pending state. `src/thunderwatch/monitor.py:75-82` and
-    `src/thunderwatch/wizard.py:248-253`. **Open.**
+   family does not clear its pending state. **Status: fixed.** Pending IPv6 changes are
+   discarded before an IPv4-only check, while pending IPv4 data is retained.
 
 12. **Failed/cancelled update downloads may not be retryable** (Opus). Fixed artifact
-    and helper names are reused while overwrite is refused.
-    `src/thunderwatch/update_dialog.py:110-117` and
-    `src/thunderwatch/updater.py:541-542,604-605`. **Open.**
+    and helper names are reused while overwrite is refused. **Status: fixed.** A retry
+    removes the prior app-managed download and adjacent AppImage helper before starting a
+    fresh verified download.
 
 13. **Linux autostart quotes paths using shell rules** (Grok). `shlex.quote()` emits
     single quotes that desktop-entry `Exec` parsing does not interpret as shell quotes;
-    executable paths containing spaces may fail at sign-in.
-    `src/thunderwatch/autostart.py:36-40`. **Open.**
+    executable paths containing spaces may fail at sign-in. **Status: fixed.** Linux
+    autostart now applies Desktop Entry argument quoting and escaping.
 
 14. **“Check IP Now” can be dropped during a running check** (Grok). A call while
-    `running` returns without preserving an immediate follow-up.
-    `src/thunderwatch/scheduler.py:36-40,52-58`. **Open.**
+    `running` returns without preserving an immediate follow-up. **Status: fixed.** A
+    manual request during a check is coalesced into one immediate run after completion.
 
 15. **A stale file password may be used if keyring access later fails** (Grok). A
     successful keyring write leaves the old fallback file in place; a later keyring
-    read failure falls through to that file. `src/thunderwatch/secrets.py:35-39,50-60`.
-    **Open.**
+    read failure falls through to that file. **Status: fixed.** When a usable keyring
+    errors during a read, password lookup now fails closed instead of using the fallback.
 
 ## Low findings
 

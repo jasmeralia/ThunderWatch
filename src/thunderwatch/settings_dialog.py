@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .autostart import set_autostart
-from .config import Config
+from .config import Config, smtp_identity_changed
 from .paths import password_path
 from .secrets import store_password
 from .wizard import SetupWizard
@@ -169,6 +169,14 @@ class SettingsDialog(QDialog):
                 self,
                 "Invalid settings",
                 "Check the SMTP fields, email addresses, security, and interval.",
+            )
+            return
+        previous = Config.from_store(self.settings)
+        if smtp_identity_changed(previous, config) and not self.password.text():
+            QMessageBox.warning(
+                self,
+                "Password required",
+                "Enter the password for the new SMTP account.",
             )
             return
         if self.password.text():

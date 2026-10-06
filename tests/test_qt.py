@@ -104,8 +104,15 @@ def test_rerun_wizard_reapplies_saved_autostart_setting(app, monkeypatch):
 
     settings = QSettings("ThunderWatchTests", "WizardAutostart")
     settings.clear()
-    settings.setValue("setup/complete", True)
-    settings.setValue("startup/autostart", False)
+    for key, value in {
+        "setup/complete": True,
+        "startup/autostart": False,
+        "smtp/host": "smtp.example.com",
+        "smtp/username": "alerts@example.com",
+        "smtp/from": "alerts@example.com",
+        "smtp/recipient": "you@example.com",
+    }.items():
+        settings.setValue(key, value)
     wizard = SetupWizard(settings)
     wizard.host.setText("smtp.example.com")
     wizard.username.setText("alerts@example.com")
@@ -119,6 +126,29 @@ def test_rerun_wizard_reapplies_saved_autostart_setting(app, monkeypatch):
     monkeypatch.setattr(wizard_module, "set_autostart", set_autostart, raising=False)
     wizard.accept()
     assert applied == [False]
+
+
+def test_rerun_wizard_requires_password_when_smtp_identity_changes(app, monkeypatch):
+    from thunderwatch import wizard as wizard_module
+
+    settings = QSettings("ThunderWatchTests", "WizardIdentityChange")
+    settings.clear()
+    for key, value in {
+        "setup/complete": True,
+        "smtp/host": "smtp.example.com",
+        "smtp/username": "old@example.com",
+        "smtp/from": "old@example.com",
+        "smtp/recipient": "you@example.com",
+    }.items():
+        settings.setValue(key, value)
+    wizard = SetupWizard(settings)
+    wizard.username.setText("new@example.com")
+    warnings = []
+    monkeypatch.setattr(wizard_module.QMessageBox, "warning", lambda *args: warnings.append(args))
+    wizard.accept()
+    assert settings.value("smtp/username") == "old@example.com"
+    assert warnings
+    wizard.close()
 
 
 def test_setup_finish_is_gated_by_successful_test_or_explicit_offline_save(app):
@@ -364,7 +394,14 @@ def test_settings_dialog_saves_valid_values_and_reapplies_autostart(app, monkeyp
 
     settings = QSettings("ThunderWatchTests", "SettingsSave")
     settings.clear()
-    settings.setValue("setup/complete", True)
+    for key, value in {
+        "setup/complete": True,
+        "smtp/host": "smtp.example.com",
+        "smtp/username": "alerts@example.com",
+        "smtp/from": "alerts@example.com",
+        "smtp/recipient": "you@example.com",
+    }.items():
+        settings.setValue(key, value)
     dialog = settings_dialog.SettingsDialog(settings)
     dialog.host.setText("smtp.example.com")
     dialog.username.setText("alerts@example.com")
@@ -383,6 +420,33 @@ def test_settings_dialog_saves_valid_values_and_reapplies_autostart(app, monkeyp
     assert applied == [True]
 
 
+def test_settings_dialog_requires_password_when_smtp_identity_changes(app, monkeypatch):
+    from thunderwatch import settings_dialog
+
+    settings = QSettings("ThunderWatchTests", "SettingsIdentityChange")
+    settings.clear()
+    for key, value in {
+        "setup/complete": True,
+        "smtp/host": "smtp.example.com",
+        "smtp/username": "old@example.com",
+        "smtp/from": "old@example.com",
+        "smtp/recipient": "you@example.com",
+    }.items():
+        settings.setValue(key, value)
+    dialog = settings_dialog.SettingsDialog(settings)
+    dialog.username.setText("new@example.com")
+    stored = []
+    warnings = []
+    monkeypatch.setattr(settings_dialog, "store_password", lambda *args: stored.append(args))
+    monkeypatch.setattr(settings_dialog.QMessageBox, "warning", lambda *args: warnings.append(args))
+    dialog._save()
+    assert dialog.result() != QDialog.DialogCode.Accepted
+    assert settings.value("smtp/username") == "old@example.com"
+    assert stored == []
+    assert warnings
+    dialog.close()
+
+
 def test_update_dialog_reports_download_failure_without_network(app):
     from thunderwatch.update_dialog import UpdateDialog
     from thunderwatch.updater import ReleaseAsset, UpdateOffer
@@ -398,3 +462,60 @@ def test_update_dialog_reports_download_failure_without_network(app):
     dialog._downloaded(False, "synthetic checksum failure", None)
     assert "synthetic checksum failure" in dialog.status_label.text()
     dialog.close()
+
+
+def test_update_dialog_removes_previous_artifacts_before_retry(app, tmp_path, monkeypatch):
+    from thunderwatch import update_dialog
+    from thunderwatch.update_dialog import UpdateDialog
+    from thunderwatch.updater import ReleaseAsset, UpdateOffer
+
+    offer = UpdateOffer(
+        "0.2.0",
+        False,
+        "notes",
+        "https://example.invalid/release",
+        ReleaseAsset("update.deb", "https://example.invalid/file", 10, "a" * 64),
+    )
+    folder = tmp_path / "updates"
+    folder.mkdir()
+    destination = folder / offer.asset.name
+    helper = destination.with_suffix(".update.sh")
+    destination.write_text("old download", encoding="utf-8")
+    helper.write_text("old helper", encoding="utf-8")
+    monkeypatch.setattr(update_dialog, "app_data", lambda: tmp_path)
+    starts = []
+
+    class FakeWorker:
+        def __init__(self, _offer, target):
+            self.destination = target
+            self.completed = Signal()
+
+        def start(self):
+            starts.append(self.destination)
+
+    class Signal:
+        def connect(self, _callback):
+            pass
+
+    monkeypatch.setattr(update_dialog, "UpdateDownloadWorker", FakeWorker)
+    dialog = UpdateDialog(offer)
+    dialog.download()
+    assert starts == [destination]
+    assert not destination.exists()
+    assert not helper.exists()
+    dialog.close()
+
+
+def test_automatic_update_timer_does_not_create_duplicate_chains(app):
+    from PyQt6.QtCore import QTimer
+
+    from thunderwatch.app import schedule_automatic_update
+
+    timer = QTimer()
+    schedule_automatic_update(timer, True)
+    assert timer.isActive()
+    assert timer.interval() == 30_000
+    schedule_automatic_update(timer, True)
+    assert timer.interval() == 30_000
+    schedule_automatic_update(timer, False)
+    assert not timer.isActive()

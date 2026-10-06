@@ -13,6 +13,18 @@ def _stamp(now: datetime) -> str:
     return now.astimezone(UTC).isoformat()
 
 
+def discard_pending_families(state: dict[str, Any], disabled_families: set[str]) -> dict[str, Any]:
+    """Return state without pending notifications for disabled address families."""
+    new = deepcopy(state)
+    pending = new.get("pending") or {}
+    changes = pending.get("changes", {})
+    for family in disabled_families:
+        changes.pop(family, None)
+    if pending and not changes:
+        new["pending"] = {}
+    return new
+
+
 def apply_lookup(  # noqa: PLR0912
     state: dict[str, Any], results: dict[str, LookupResult], now: datetime
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
