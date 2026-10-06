@@ -18,9 +18,10 @@ The suite theme and icon are copied from TempestTrace. Core and updater tests us
 providers/SMTP and synthetic data.
 
 The design is not complete yet: full native package installation acceptance,
-package-specific update handoff validation, some settings/status behavior,
-network-online/resume triggers, and hands-on acceptance checks still need work. The
-README describes this as development software until those checks pass.
+package-specific update handoff validation, some settings/status behavior, and
+hands-on acceptance checks still need work. Network-online and long-resume triggers
+are implemented; verify them during hands-on acceptance. The README describes this
+as development software until those checks pass.
 
 ## Goal and boundaries
 

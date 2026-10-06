@@ -86,14 +86,20 @@ def _valid_last_check(last_check: Any) -> bool:
     invalid_check_details = (
         ("time" in last_check and not isinstance(last_check["time"], str))
         or (
-            "result" in last_check and last_check["result"] not in {"success", "partial", "failure"}
+            "result" in last_check
+            and (
+                not isinstance(last_check["result"], str)
+                or last_check["result"] not in {"success", "partial", "failure"}
+            )
         )
         or ("error" in last_check and not isinstance(last_check["error"], str))
     )
     invalid_families = "families" in last_check and (
         not isinstance(last_check["families"], dict)
         or any(
-            family not in FAMILIES or result not in {"success", "failure"}
+            family not in FAMILIES
+            or not isinstance(result, str)
+            or result not in {"success", "failure"}
             for family, result in last_check["families"].items()
         )
     )
@@ -152,7 +158,7 @@ def read_state(path: Path) -> dict[str, Any]:
         if not _valid_state(data):
             raise ValueError("invalid state schema")
         return cast(dict[str, Any], data)
-    except OSError, ValueError, TypeError, json.JSONDecodeError:
+    except FileNotFoundError:
         return empty_state()
 
 

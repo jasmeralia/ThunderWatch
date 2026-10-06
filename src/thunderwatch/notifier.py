@@ -24,6 +24,7 @@ def compose_email(  # noqa: PLR0913, PLR0917
 ) -> EmailMessage:
     changes = changes or {}
     current = current or {}
+    location = " ".join(location.replace("\r", "\n").splitlines()).strip()
     now = now or datetime.now().astimezone()
     message = EmailMessage()
     if kind == "test":

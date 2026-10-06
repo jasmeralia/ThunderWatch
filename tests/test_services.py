@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from http.client import IncompleteRead
 from pathlib import Path
 from typing import Any
 
@@ -43,13 +44,22 @@ def test_fetch_sets_timeout_user_agent_and_caps_response(monkeypatch):
         seen.update(url=request.full_url, agent=request.get_header("User-agent"), timeout=timeout)
         return Response()
 
-    monkeypatch.setattr("thunderwatch.ipcheck.urllib.request.urlopen", open_url)
+    class Opener:
+        def open(self, request, timeout):
+            return open_url(request, timeout)
+
+    def build_opener(handler):
+        seen["https_redirect_handler"] = type(handler).__name__
+        return Opener()
+
+    monkeypatch.setattr("thunderwatch.ipcheck.urllib.request.build_opener", build_opener)
     assert fetch("https://provider.example/ip", "1.2.3") == "8.8.4.4"
     assert seen == {
         "url": "https://provider.example/ip",
         "agent": "ThunderWatch/1.2.3",
         "timeout": 10,
         "limit": 65,
+        "https_redirect_handler": "HTTPSRedirectHandler",
     }
 
 
@@ -64,11 +74,47 @@ def test_fetch_rejects_oversized_response(monkeypatch):
         def read(self, limit):
             return b"x" * 65
 
-    monkeypatch.setattr(
-        "thunderwatch.ipcheck.urllib.request.urlopen", lambda *args, **kwargs: Response()
-    )
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            return Response()
+
+    def build_opener(_handler):
+        return Opener()
+
+    monkeypatch.setattr("thunderwatch.ipcheck.urllib.request.build_opener", build_opener)
     with pytest.raises(ValueError, match="64 bytes"):
         fetch("https://provider.example/ip")
+
+
+def test_fetch_uses_installed_version_by_default(monkeypatch):
+    seen = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, _limit):
+            return b"8.8.4.4"
+
+    monkeypatch.setattr("thunderwatch.ipcheck.installed_version", lambda: "2.3.4")
+
+    def open_url(request, **_kwargs):
+        seen["agent"] = request.get_header("User-agent")
+        return Response()
+
+    class Opener:
+        def open(self, request, **kwargs):
+            return open_url(request, **kwargs)
+
+    def build_opener(_handler):
+        return Opener()
+
+    monkeypatch.setattr("thunderwatch.ipcheck.urllib.request.build_opener", build_opener)
+    assert fetch("https://provider.example/ip") == "8.8.4.4"
+    assert seen["agent"] == "ThunderWatch/2.3.4"
 
 
 def test_lookup_uses_later_matching_provider_after_first_provider_fails():
@@ -83,6 +129,17 @@ def test_lookup_uses_later_matching_provider_after_first_provider_fails():
     result = lookup("ipv4", fake, ("bad", "good", "later"), baseline="8.8.4.4")
     assert result.value == "8.8.4.4"
     assert calls == ["bad", "good"]
+
+
+def test_lookup_falls_back_after_http_protocol_error():
+    def fake(url):
+        if url == "broken":
+            raise IncompleteRead(b"8.8.")
+        return "8.8.4.4"
+
+    result = lookup("ipv4", fake, ("broken", "good"), baseline="8.8.4.4")
+    assert result.value == "8.8.4.4"
+    assert result.providers == ("good",)
 
 
 def test_ipv4_mapped_ipv6_and_cgnat_are_rejected():
@@ -118,6 +175,12 @@ def test_compose_started_and_test_subjects_include_location_and_current_address(
     assert started["Subject"] == "ThunderWatch: monitoring started for Example Home (8.8.4.4)"
     assert test["Subject"] == "ThunderWatch test from Example Home"
     assert "ipv4: 8.8.4.4" in test.get_content()
+
+
+def test_email_location_newlines_cannot_create_extra_headers():
+    message = compose_email("test", "Home\nBcc: attacker@example.test", "host", "0.1.0")
+    assert list(message.keys()).count("Bcc") == 0
+    assert "\n" not in message["Subject"]
 
 
 def test_send_email_sets_message_headers_and_verified_tls_context():
@@ -242,6 +305,7 @@ def test_check_worker_emits_failure_result_if_lookup_raises(monkeypatch):
     assert len(results) == 1
     assert results[0][0]["last_check"]["result"] == "failure"
     assert any(action["type"] == "retry" for action in results[0][1])
+    assert results[0][0]["ipv4_failure_streak"] == 1
 
 
 def test_check_worker_completes_if_state_persistence_raises(monkeypatch):
@@ -269,6 +333,26 @@ def test_check_worker_completes_if_state_persistence_raises(monkeypatch):
     assert len(results) == 1
     assert results[0][0]["last_check"]["error"] == "OSError"
     assert any(action["type"] == "retry" for action in results[0][1])
+
+
+def test_check_worker_does_not_overwrite_unreadable_state(monkeypatch):
+    from pathlib import Path
+
+    from thunderwatch import worker
+    from thunderwatch.config import Config
+
+    writes = []
+    monkeypatch.setattr(worker, "state_path", lambda: Path("protected-state.json"))
+    monkeypatch.setattr(
+        worker, "read_state", lambda _path: (_ for _ in ()).throw(PermissionError("denied"))
+    )
+    monkeypatch.setattr(worker, "write_state", lambda *args: writes.append(args))
+    check = worker.CheckWorker(Config(ipv6=False))
+    results = []
+    check.finished.connect(lambda state, actions: results.append((state, actions)))
+    check.check()
+    assert writes == []
+    assert results[0][0]["last_check"]["error"] == "PermissionError"
 
 
 def test_secret_store_prefers_keyring_and_reads_it_back(monkeypatch):
@@ -307,6 +391,20 @@ def test_secret_read_returns_none_when_backend_and_fallback_are_unavailable(monk
     assert secrets.read_password("user", "host", tmp_path / "missing") is None
 
 
+def test_flatpak_background_portal_denial_becomes_a_user_visible_error():
+    from thunderwatch.autostart import QtBackgroundPortal, background_portal_error
+
+    assert background_portal_error(0, {"background": False, "autostart": False}, True)
+    assert background_portal_error(1, {}, True)
+    assert background_portal_error(0, {"background": True, "autostart": True}, True) is None
+    portal = QtBackgroundPortal()
+    failures = []
+    portal.request_failed.connect(failures.append)
+    portal._requested_autostart = True
+    portal._on_response(0, {"background": False, "autostart": False})
+    assert failures == ["The desktop portal denied ThunderWatch automatic startup."]
+
+
 def test_keyring_read_failure_does_not_use_stale_password_file(monkeypatch, tmp_path):
     class BrokenKeyring:
         def get_keyring(self):
@@ -319,6 +417,21 @@ def test_keyring_read_failure_does_not_use_stale_password_file(monkeypatch, tmp_
     fallback.write_text("stale-secret", encoding="utf-8")
     monkeypatch.setattr(secrets, "_keyring", BrokenKeyring)
     assert secrets.read_password("user", "host", fallback) is None
+
+
+def test_keyring_read_failure_uses_identity_matched_fallback(monkeypatch, tmp_path):
+    class BrokenKeyring:
+        def get_keyring(self):
+            return object()
+
+        def get_password(self, *_args):
+            raise RuntimeError("keyring locked")
+
+    fallback = tmp_path / "password"
+    monkeypatch.setattr(secrets, "keyring_available", lambda: True)
+    monkeypatch.setattr(secrets, "_keyring", BrokenKeyring)
+    secrets.store_password("user", "host", "file-secret", fallback, allow_file=True)
+    assert secrets.read_password("user", "host", fallback) == "file-secret"
 
 
 def test_healthy_keyring_missing_entry_can_use_opted_in_file_fallback(monkeypatch, tmp_path):
@@ -504,6 +617,43 @@ def test_scheduler_starts_next_timer_before_emitting_state(app):
     scheduler.timer.stop()
 
 
+def test_reconnect_and_long_resume_gaps_trigger_immediate_checks():
+    from PyQt6.QtNetwork import QNetworkInformation
+
+    from thunderwatch.scheduler import reachability_became_online, resume_gap_elapsed
+
+    reachability = QNetworkInformation.Reachability
+    assert reachability_became_online(reachability.Disconnected, reachability.Online)
+    assert not reachability_became_online(reachability.Online, reachability.Online)
+    assert resume_gap_elapsed(100.0, 221.0, interval_minutes=1)
+    assert not resume_gap_elapsed(100.0, 220.0, interval_minutes=1)
+
+
+def test_scheduler_checks_on_reconnect_and_after_long_resume_gap(app, monkeypatch):
+    from PyQt6.QtCore import QObject, pyqtSignal
+    from PyQt6.QtNetwork import QNetworkInformation
+
+    class FakeNetworkInformation(QObject):
+        reachabilityChanged = pyqtSignal(QNetworkInformation.Reachability)
+
+        def reachability(self):
+            return QNetworkInformation.Reachability.Disconnected
+
+    info = FakeNetworkInformation()
+    scheduler = Scheduler(Config(interval_minutes=1), info)
+    checks = []
+    scheduler.run = lambda: checks.append("immediate")
+    info.reachabilityChanged.emit(QNetworkInformation.Reachability.Online)
+    assert checks == ["immediate"]
+
+    scheduler._last_clock_check = 100.0
+    monkeypatch.setattr("thunderwatch.scheduler.time.time", lambda: 221.0)
+    scheduler._check_for_resume()
+    assert checks == ["immediate", "immediate"]
+    scheduler.timer.stop()
+    scheduler._clock_timer.stop()
+
+
 def test_paused_scheduler_does_not_reschedule_until_resumed(app):
     scheduler = Scheduler(Config(interval_minutes=10))
     scheduler.pause_and_wait()
@@ -533,6 +683,36 @@ def test_scheduler_coalesces_check_requested_while_running():
     assert scheduler._run_requested
     scheduler.done({"last_check": {"result": "success"}}, [])
     assert scheduler.timer.interval() == 0
+    scheduler.timer.stop()
+
+
+def test_scheduler_ignores_old_thread_cleanup_after_replacement(app):
+    from PyQt6.QtCore import QThread
+
+    scheduler = Scheduler(Config())
+    old_thread = QThread()
+    current_thread = QThread()
+    current_worker = object()
+    scheduler._worker_thread = current_thread
+    scheduler._worker = current_worker
+
+    scheduler._worker_stopped(old_thread)
+
+    assert scheduler._worker_thread is current_thread
+    assert scheduler._worker is current_worker
+    scheduler.timer.stop()
+    old_thread.deleteLater()
+    current_thread.deleteLater()
+
+
+def test_scheduler_does_not_start_or_queue_checks_while_paused(app):
+    scheduler = Scheduler(Config())
+    scheduler._paused = True
+    scheduler.running = True
+
+    scheduler.run()
+
+    assert not scheduler._run_requested
     scheduler.timer.stop()
 
 

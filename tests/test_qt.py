@@ -10,7 +10,7 @@ from PyQt6.QtCore import QSettings
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QPushButton
 
-from thunderwatch.app import StatusWindow, should_setup
+from thunderwatch.app import StatusWindow, current_addresses, should_setup
 from thunderwatch.config import Config
 from thunderwatch.scheduler import Scheduler
 from thunderwatch.wizard import SetupWizard
@@ -27,6 +27,17 @@ def test_incomplete_configuration_routes_to_setup():
             return default
 
     assert should_setup(Store())
+
+
+def test_windows_instance_server_name_is_scoped_to_account():
+    from thunderwatch.app import instance_server_name
+
+    assert instance_server_name(
+        "win32", environment={"USERDOMAIN": "DOMAIN", "USERNAME": "jas"}
+    ) == instance_server_name("win32", environment={"USERDOMAIN": "DOMAIN", "USERNAME": "jas"})
+    assert instance_server_name(
+        "win32", environment={"USERDOMAIN": "DOMAIN", "USERNAME": "jas"}
+    ) != instance_server_name("win32", environment={"USERDOMAIN": "OTHER", "USERNAME": "jas"})
 
 
 def test_qsettings_storage_uses_test_temp_directory(isolated_qsettings):
@@ -105,6 +116,26 @@ def test_status_window_marks_ipv6_unavailable_after_failed_latest_lookup(app):
     )
     assert "IPv6: not available · last seen last-good-check" in window.summary.text()
     assert "IPv6: 2001:db8:1::/64" not in window.summary.text()
+    scheduler.timer.stop()
+    window.close()
+
+
+def test_copy_current_ip_omits_stale_and_disabled_addresses(app, monkeypatch):
+    from thunderwatch import app as app_module
+
+    scheduler = Scheduler(Config(ipv6=False))
+    window = StatusWindow(scheduler)
+    state = {
+        "last_observed": {
+            "ipv4": {"value": "8.8.4.4"},
+            "ipv6": {"value": "2001:4860:4860::/64"},
+        },
+        "last_check": {"families": {"ipv4": "failure", "ipv6": "success"}},
+    }
+    monkeypatch.setattr(app_module, "read_state", lambda _path: state)
+    window.copy_ip()
+    assert QApplication.clipboard().text() == ""
+    assert current_addresses(state, ipv6_enabled=False) == {}
     scheduler.timer.stop()
     window.close()
 
@@ -789,6 +820,28 @@ def test_update_dialog_reports_download_failure_without_network(app):
     dialog.close()
 
 
+def test_linux_package_download_gives_install_instructions(app, tmp_path, monkeypatch):
+    from thunderwatch import update_dialog
+    from thunderwatch.update_dialog import UpdateDialog
+    from thunderwatch.updater import ReleaseAsset, UpdateOffer
+
+    offer = UpdateOffer(
+        "0.2.0",
+        False,
+        "notes",
+        "https://example.invalid/release",
+        ReleaseAsset(
+            "ThunderWatch-v0.2.0-linux-amd64.deb", "https://example.invalid/file", 10, "a" * 64
+        ),
+    )
+    monkeypatch.setattr(update_dialog.QDesktopServices, "openUrl", lambda _url: True)
+    dialog = UpdateDialog(offer)
+    dialog._downloaded(True, "verified", tmp_path / offer.asset.name)
+    assert "Install it with your package manager" in dialog.status_label.text()
+    assert "restart ThunderWatch" in dialog.status_label.text()
+    dialog.close()
+
+
 def test_windows_update_launch_resets_pyinstaller_environment_and_detaches(
     app, tmp_path, monkeypatch
 ):
@@ -870,6 +923,8 @@ def test_update_dialog_removes_previous_artifacts_before_retry(app, tmp_path, mo
     helper = destination.with_suffix(".update.sh")
     destination.write_text("old download", encoding="utf-8")
     helper.write_text("old helper", encoding="utf-8")
+    stale_release = folder / "ThunderWatch-v0.1.0-linux-amd64.rpm"
+    stale_release.write_text("old rpm", encoding="utf-8")
     monkeypatch.setattr(update_dialog, "app_data", lambda: tmp_path)
     starts = []
 
@@ -894,7 +949,40 @@ def test_update_dialog_removes_previous_artifacts_before_retry(app, tmp_path, mo
     assert starts == [destination]
     assert not destination.exists()
     assert not helper.exists()
+    assert not stale_release.exists()
     dialog.close()
+
+
+def test_quit_requests_worker_interruption_before_waiting():
+    from types import SimpleNamespace
+
+    from thunderwatch.app import ThunderWatchApp
+
+    class FakeThread:
+        def __init__(self):
+            self.calls = []
+
+        def isRunning(self):
+            return True
+
+        def requestInterruption(self):
+            self.calls.append("interrupt")
+
+        def quit(self):
+            self.calls.append("quit")
+
+        def wait(self):
+            self.calls.append("wait")
+
+    thread = FakeThread()
+    instance = SimpleNamespace(
+        _test_thread=thread,
+        _update_thread=None,
+        scheduler=None,
+        _update_dialog=None,
+    )
+    ThunderWatchApp._wait_for_workers(instance)
+    assert thread.calls == ["interrupt", "quit", "wait"]
 
 
 def test_automatic_update_timer_does_not_create_duplicate_chains(app):

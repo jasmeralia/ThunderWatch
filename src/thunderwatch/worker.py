@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 from .config import Config
 from .ipcheck import lookup
@@ -22,6 +22,11 @@ from .updater import installed_version
 logger = logging.getLogger(__name__)
 
 
+def _shutdown_requested() -> bool:
+    thread = QThread.currentThread()
+    return bool(thread and thread.isInterruptionRequested())
+
+
 class CheckWorker(QObject):
     finished = pyqtSignal(dict, list)
 
@@ -30,11 +35,15 @@ class CheckWorker(QObject):
         self.config = config
 
     @pyqtSlot()
-    def check(self) -> None:
+    def check(self) -> None:  # noqa: PLR0912, PLR0915
         state = empty_state()
         actions: list[dict[str, Any]] = [{"type": "retry"}]
+        state_loaded = False
+        ipv4_lookup_started = False
+        ipv4_lookup_completed = False
         try:
             state = read_state(state_path())
+            state_loaded = True
             if not self.config.ipv6:
                 state = discard_pending_families(state, {"ipv6"})
             results = {}
@@ -42,10 +51,18 @@ class CheckWorker(QObject):
                 if family == "ipv6" and not self.config.ipv6:
                     continue
                 baseline = state.get("last_reported", {}).get(family, {}).get("value")
+                if family == "ipv4":
+                    ipv4_lookup_started = True
                 results[family] = lookup(family, baseline=baseline)
+                if family == "ipv4":
+                    ipv4_lookup_completed = True
+            if _shutdown_requested():
+                raise InterruptedError("check cancelled during shutdown")
             state, actions = apply_lookup(state, results, datetime.now().astimezone())
             write_state(state_path(), state)
             action = next((item for item in actions if item["type"].startswith("send_")), None)
+            if _shutdown_requested():
+                raise InterruptedError("check cancelled during shutdown")
             if action:
                 password = read_password(
                     self.config.smtp_username, self.config.smtp_host, password_path()
@@ -78,6 +95,10 @@ class CheckWorker(QObject):
                 )
                 actions.extend(delivery_actions)
                 write_state(state_path(), state)
+        except InterruptedError:
+            logger.info("IP check cancelled during application shutdown")
+            self.finished.emit(state, [])
+            return
         except Exception as exc:
             logger.exception("IP check worker failed")
             now = datetime.now().astimezone().isoformat()
@@ -86,14 +107,17 @@ class CheckWorker(QObject):
                 "result": "failure",
                 "error": type(exc).__name__,
             }
+            if ipv4_lookup_started and not ipv4_lookup_completed:
+                state["ipv4_failure_streak"] = state.get("ipv4_failure_streak", 0) + 1
             state.setdefault("history", []).append(
                 {"type": "check_failed", "time": now, "error": type(exc).__name__}
             )
             actions = [{"type": "retry"}]
-            try:
-                write_state(state_path(), state)
-            except Exception:
-                logger.exception("Could not persist IP check failure")
+            if state_loaded:
+                try:
+                    write_state(state_path(), state)
+                except Exception:
+                    logger.exception("Could not persist IP check failure")
         self.finished.emit(state, actions)
 
 
@@ -131,11 +155,17 @@ class TestEmailWorker(QObject):
             return
         addresses = {}
         for family in ("ipv4", "ipv6"):
+            if _shutdown_requested():
+                self.finished.emit(False, "Test email cancelled during application shutdown")
+                return
             if family == "ipv6" and not self.config.ipv6:
                 continue
             result = lookup(family)
             if result.ok and result.value:
                 addresses[family] = result.value
+        if _shutdown_requested():
+            self.finished.emit(False, "Test email cancelled during application shutdown")
+            return
         self.current_addresses = addresses
         message = compose_email(
             "test",

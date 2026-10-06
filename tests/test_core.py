@@ -249,12 +249,29 @@ def test_smtp_refused_recipient_is_failure():
     assert "refused" in message
 
 
-def test_smoke_test_builds_qt_app_then_exits(monkeypatch):
-    from thunderwatch.app import main
+def test_smoke_test_builds_qt_app_then_exits(monkeypatch, tmp_path):
+    from thunderwatch import app as app_module
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    opened_paths = []
+    monkeypatch.setattr(app_module, "configure_logging", lambda: log_dir)
+
+    def record_path(path):
+        opened_paths.append(path)
+
+    monkeypatch.setattr(app_module, "snapshot_previous_fatal_log", record_path)
+    monkeypatch.setattr(app_module, "enable_fault_handler", record_path)
+    monkeypatch.setattr(app_module, "install_sys_hook", lambda: None)
+    monkeypatch.setattr(app_module, "install_thread_hook", lambda: None)
+    monkeypatch.setattr(app_module, "install_unraisable_hook", lambda: None)
+    monkeypatch.setattr(app_module, "install_qt_message_handler", lambda: None)
+    monkeypatch.setattr(app_module, "read_state", lambda _path: {})
 
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     monkeypatch.setattr("sys.argv", ["thunderwatch", "--smoke-test"])
-    assert main() == 0
+    assert app_module.main() == 0
+    assert opened_paths == [log_dir, log_dir]
     from PyQt6.QtWidgets import QApplication
 
     from thunderwatch.theme import GLOBAL_QSS
@@ -329,6 +346,20 @@ def test_confirmed_candidate_is_added_to_history():
     )
     assert state["history"][-1]["type"] == "change_detected"
     assert actions[0]["type"] == "send_started"
+
+
+def test_new_ipv6_family_is_reported_as_change_when_ipv4_was_already_reported():
+    from thunderwatch.ipcheck import LookupResult
+
+    state = empty_state()
+    state["last_reported"]["ipv4"] = {"value": "8.8.4.4", "time": "earlier"}
+    _updated, actions = apply_lookup(
+        state,
+        {"ipv6": LookupResult("ipv6", "2001:4860:4860::/64", ("v6a", "v6b"))},
+        datetime.now(UTC),
+    )
+    assert actions[0]["type"] == "send_change"
+    assert actions[0]["changes"]["ipv6"]["old"] is None
 
 
 def test_mixed_first_ipv6_observation_does_not_hide_ipv4_change():
@@ -626,14 +657,16 @@ def test_auto_tls_port_465_uses_implicit_tls_factory_only():
     assert "starttls" not in calls
 
 
-def test_corrupt_and_unknown_state_versions_degrade_to_empty(tmp_path):
+def test_corrupt_and_unknown_state_versions_are_rejected_without_resetting(tmp_path):
     import json
 
     path = tmp_path / "state.json"
     path.write_text("not json", encoding="utf-8")
-    assert read_state(path)["last_reported"] == {}
+    with pytest.raises(json.JSONDecodeError):
+        read_state(path)
     path.write_text(json.dumps({"version": 999, "history": []}), encoding="utf-8")
-    assert read_state(path)["version"] == 1
+    with pytest.raises(ValueError, match="invalid state schema"):
+        read_state(path)
 
 
 @pytest.mark.parametrize(
@@ -650,9 +683,10 @@ def test_corrupt_and_unknown_state_versions_degrade_to_empty(tmp_path):
         {"history": [{"type": "change_detected", "time": "now", "changes": []}]},
     ],
 )
-def test_malformed_version_one_state_degrades_to_empty(tmp_path, invalid_state):
+def test_malformed_version_one_state_is_rejected(tmp_path, invalid_state):
     import json
 
     path = tmp_path / "state.json"
     path.write_text(json.dumps({**empty_state(), **invalid_state}), encoding="utf-8")
-    assert read_state(path) == empty_state()
+    with pytest.raises(ValueError, match="invalid state schema"):
+        read_state(path)

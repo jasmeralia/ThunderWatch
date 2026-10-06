@@ -30,6 +30,11 @@ from .updater import (
 logger = logging.getLogger(__name__)
 
 
+def _shutdown_requested() -> bool:
+    thread = QThread.currentThread()
+    return bool(thread and thread.isInterruptionRequested())
+
+
 class UpdateDownloadWorker(QThread):
     completed = pyqtSignal(bool, str, object)
 
@@ -45,10 +50,14 @@ class UpdateDownloadWorker(QThread):
                 self.offer.asset.size,
                 self.offer.asset.sha256,
                 self.destination,
+                cancelled=_shutdown_requested,
             )
             self.completed.emit(True, "Verified update download.", path)
         except Exception as exc:
-            logger.exception("Update download worker failed")
+            if isinstance(exc, InterruptedError):
+                logger.info("Update download cancelled during shutdown")
+            else:
+                logger.exception("Update download worker failed")
             self.completed.emit(False, str(exc) or type(exc).__name__, None)
 
 
@@ -64,6 +73,9 @@ class UpdateCheckWorker(QObject):
     @pyqtSlot()
     def run(self) -> None:
         try:
+            if _shutdown_requested():
+                self.finished.emit(None, "Update check cancelled during application shutdown")
+                return
             package = detect_package_type()
             if package is None:
                 self.finished.emit(None, "Update checks require an installed package.")
@@ -77,6 +89,9 @@ class UpdateCheckWorker(QObject):
                 package,
                 self.config.include_beta,
             )
+            if _shutdown_requested():
+                self.finished.emit(None, "Update check cancelled during application shutdown")
+                return
             self.finished.emit(offer, "")
         except Exception as exc:
             logger.exception("Update check worker failed")
@@ -128,6 +143,9 @@ class UpdateDialog(QDialog):
     def download(self) -> None:
         folder = app_data() / "updates"
         folder.mkdir(parents=True, exist_ok=True)
+        for previous in folder.glob("ThunderWatch-*"):
+            if previous.is_file() or previous.is_symlink():
+                previous.unlink(missing_ok=True)
         destination = folder / self.offer.asset.name
         destination.unlink(missing_ok=True)
         destination.with_suffix(".update.sh").unlink(missing_ok=True)
@@ -190,6 +208,11 @@ class UpdateDialog(QDialog):
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
             self.status_label.setText(f"Downloaded {path}; open it to install the update.")
+        else:
+            self.status_label.setText(
+                f"Downloaded {path}. Install it with your package manager, "
+                "then restart ThunderWatch."
+            )
 
     def _quit_application(self) -> None:
         if self.on_installed:

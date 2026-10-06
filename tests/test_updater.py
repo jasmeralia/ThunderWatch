@@ -218,6 +218,28 @@ def test_verified_download_streams_to_destination(tmp_path: Path) -> None:
     assert destination.read_bytes() == payload
 
 
+def test_verified_download_cancellation_removes_partial_file(tmp_path: Path) -> None:
+    payload = b"x" * (updater.READ_CHUNK_SIZE + 1)
+    reads = []
+
+    class SlowResponse(io.BytesIO):
+        def read(self, size=-1):
+            reads.append(True)
+            return super().read(size)
+
+    with pytest.raises(InterruptedError, match="cancelled"):
+        verify_download(
+            "https://example.invalid/package",
+            len(payload),
+            hashlib.sha256(payload).hexdigest(),
+            tmp_path / "update.part",
+            opener=lambda _url: SlowResponse(payload),
+            cancelled=lambda: len(reads) > 0,
+        )
+    assert not (tmp_path / "update.part").exists()
+    assert not list(tmp_path.glob("*.part"))
+
+
 @pytest.mark.parametrize(
     ("size", "digest"),
     [(99, hashlib.sha256(b"wrong").hexdigest()), (5, "0" * 64)],
@@ -251,6 +273,24 @@ def test_verified_download_enforces_size_ceiling(tmp_path: Path) -> None:
 def test_source_version_placeholder_is_not_an_installed_release() -> None:
     assert installed_version("0.0.0") is None
     assert installed_version("v1.2.3") == "1.2.3"
+
+
+def test_package_detection_restores_host_library_path_for_package_queries(monkeypatch):
+    seen = []
+    monkeypatch.setattr(updater.shutil, "which", lambda command: "/usr/bin/dpkg-query")
+
+    def run(command, **kwargs):
+        seen.append(kwargs["env"])
+        return types.SimpleNamespace(returncode=0, stdout="thunderwatch: /usr/bin/thunderwatch")
+
+    monkeypatch.setattr(updater.subprocess, "run", run)
+    package = detect_package_type(
+        "linux",
+        {"LD_LIBRARY_PATH": "/bundle/lib", "LD_LIBRARY_PATH_ORIG": "/usr/lib"},
+        "/usr/bin/thunderwatch",
+    )
+    assert package == "deb"
+    assert seen == [{"LD_LIBRARY_PATH": "/usr/lib"}]
 
 
 def test_package_detection_prefers_explicit_runtime_markers() -> None:
@@ -535,7 +575,7 @@ def test_appimage_update_helper_waits_replaces_and_keeps_rollback(tmp_path: Path
     assert "sleep 10" not in script
     assert 'nohup env PYINSTALLER_RESET_ENVIRONMENT=1 "$current"' in script
     assert script.index('rm -f -- "$rollback"') < script.index("trap - EXIT HUP INT TERM")
-    assert script.index("trap - EXIT HUP INT TERM") < script.index(
+    assert script.rindex("trap - EXIT HUP INT TERM") < script.rindex(
         "nohup env PYINSTALLER_RESET_ENVIRONMENT=1"
     )
     assert "current AppImage" in script and "new AppImage" in script
@@ -546,7 +586,13 @@ def test_appimage_helper_uses_smoke_test_and_rolls_back_only_on_failure(
     tmp_path: Path, smoke_exit: int, expected_exit: int
 ) -> None:
     current = tmp_path / "ThunderWatch.AppImage"
-    current.write_bytes(b"old")
+    old_payload = (
+        "#!/bin/sh\n"
+        f"events={shlex.quote(str(tmp_path / 'app-events.log'))}\n"
+        'echo old-launch >> "$events"\n'
+    )
+    current.write_text(old_payload, encoding="utf-8")
+    current.chmod(0o700)
     stage = tmp_path / "stage"
     stage.mkdir()
     downloaded = stage / "ThunderWatch.new.AppImage"
@@ -569,15 +615,18 @@ def test_appimage_helper_uses_smoke_test_and_rolls_back_only_on_failure(
     result = subprocess.run(["/bin/sh", str(helper)], check=False, capture_output=True)
 
     assert result.returncode == expected_exit
-    assert current.read_bytes() == (new_payload.encode() if smoke_exit == 0 else b"old")
+    assert current.read_bytes() == (
+        new_payload.encode() if smoke_exit == 0 else old_payload.encode()
+    )
     assert not list(tmp_path.glob("*.thunderwatch-rollback.*"))
     deadline = time.monotonic() + 20
-    while smoke_exit == 0 and time.monotonic() < deadline:
-        if events.exists() and "launch:1" in events.read_text(encoding="utf-8"):
+    expected_launch = "launch:1" if smoke_exit == 0 else "old-launch"
+    while time.monotonic() < deadline:
+        if events.exists() and expected_launch in events.read_text(encoding="utf-8"):
             break
         time.sleep(0.01)
     event_text = events.read_text(encoding="utf-8") if events.exists() else ""
     if smoke_exit == 0:
         assert event_text.splitlines() == ["smoke", "launch:1"]
     else:
-        assert event_text.splitlines() == ["smoke"]
+        assert event_text.splitlines() == ["smoke", "old-launch"]

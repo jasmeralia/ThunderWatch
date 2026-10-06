@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
+
+from . import __version__
+from .updater import HTTPSRedirectHandler, installed_version
 
 IPV4_PROVIDERS = (
     "https://api.ipify.org",
@@ -29,9 +33,12 @@ class LookupResult:
         return self.value is not None
 
 
-def fetch(url: str, version: str = "0.0.0") -> str:
+def fetch(url: str, version: str | None = None) -> str:
+    if version is None:
+        version = installed_version() or __version__
     request = urllib.request.Request(url, headers={"User-Agent": f"ThunderWatch/{version}"})
-    with urllib.request.urlopen(request, timeout=10) as response:
+    opener = urllib.request.build_opener(HTTPSRedirectHandler())
+    with opener.open(request, timeout=10) as response:
         body = cast(bytes, response.read(65))
     if len(body) > 64:
         raise ValueError("response exceeds 64 bytes")
@@ -75,7 +82,13 @@ def lookup(
             if not valid and value == baseline:
                 return LookupResult(family, value, (url,))
             valid.append((url, value))
-        except (OSError, ValueError, UnicodeError, urllib.error.URLError) as exc:
+        except (
+            OSError,
+            ValueError,
+            UnicodeError,
+            urllib.error.URLError,
+            http.client.HTTPException,
+        ) as exc:
             errors.append(str(exc) or type(exc).__name__)
     counts: dict[str, list[str]] = {}
     for url, value in valid:

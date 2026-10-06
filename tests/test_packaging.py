@@ -49,10 +49,28 @@ def test_nsis_process_check_pops_both_ns_exec_results():
         assert return_code < captured_output
 
 
+def test_nsis_process_kill_and_check_are_scoped_to_current_account():
+    installer = (ROOT / "build/installer.nsi").read_text()
+    for section in ("Function KillRunningThunderWatch", "Function un.KillRunningThunderWatch"):
+        function = installer.split(section, 1)[1].split("FunctionEnd", 1)[0]
+        assert function.count('"USERNAME eq $%USERDOMAIN%\\$%USERNAME%"') == 2
+
+
 def test_nsis_rollback_relaunches_restored_application():
     installer = (ROOT / "build/installer.nsi").read_text()
     failed_callback = installer.split("Function .onInstFailed", 1)[1].split("FunctionEnd", 1)[0]
     assert "Exec '\"$INSTDIR\\ThunderWatch.exe\" --show'" in failed_callback
+
+
+def test_nsis_user_abort_restores_and_relaunches_application():
+    installer = (ROOT / "build/installer.nsi").read_text()
+    aborted_callback = installer.split("Function .onUserAbort", 1)[1].split("FunctionEnd", 1)[0]
+    assert "Call .onInstFailed" in aborted_callback
+
+
+def test_release_retry_detection_includes_cancelled_release_jobs():
+    workflow = (ROOT / ".github/workflows/release.yml").read_text()
+    assert '.conclusion == "cancelled"' in workflow
 
 
 def test_nsis_checks_recovery_directory_before_stopping_application():

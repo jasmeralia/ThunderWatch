@@ -28,9 +28,9 @@ The repository includes the Qt-free lookup, confirmation, state, configuration,
 secret-storage, and SMTP modules; an initial tray and setup UI; version selection and
 verified updater download helpers; and the shared Storm Desktop Suite icon and theme.
 The release workflows now build Windows and Linux packages and publish beta releases
-after successful master builds. The first complete release run and hands-on Windows/Linux
-package validation, package-specific update handoff checks, and network resume handling
-are still outstanding.
+after successful master builds. Network reconnect and long-resume checks are
+implemented, but the first complete release run, hands-on Windows/Linux package
+validation, and package-specific update handoff validation are still outstanding.
 
 ## Screenshots
 

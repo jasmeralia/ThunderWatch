@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import getpass
+import hashlib
 import logging
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, QUrl
@@ -28,7 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import __version__
-from .autostart import set_autostart
+from .autostart import QtBackgroundPortal, set_autostart
 from .config import Config
 from .error_handling import (
     enable_fault_handler,
@@ -70,6 +72,23 @@ def should_setup(settings: Any) -> bool:
     return not Config.from_store(settings).complete
 
 
+def instance_server_name(
+    platform: str = sys.platform,
+    *,
+    uid: int | None = None,
+    environment: Mapping[str, str] | None = None,
+) -> str:
+    """Build a stable local-server name that does not collide across Windows accounts."""
+    if platform != "win32":
+        return f"thunderwatch-{os.getuid() if uid is None else uid}"
+    values = os.environ if environment is None else environment
+    identity = f"{values.get('USERDOMAIN', '')}\\{values.get('USERNAME', '')}".casefold()
+    if identity == "\\":
+        identity = getpass.getuser().casefold()
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+    return f"thunderwatch-{digest}"
+
+
 def tray_wait_state(available: bool, elapsed_seconds: int) -> str:
     if available:
         return "ready"
@@ -78,6 +97,28 @@ def tray_wait_state(available: bool, elapsed_seconds: int) -> str:
 
 def pending_balloon_transition(was_pending: bool, is_pending: bool) -> bool:
     return is_pending and not was_pending
+
+
+def current_addresses(state: dict[str, Any], ipv6_enabled: bool = True) -> dict[str, str]:
+    """Return only addresses confirmed by the latest check for enabled families."""
+    observed = state.get("last_observed", {})
+    last_check = state.get("last_check", {})
+    result: dict[str, str] = {}
+    for family in ("ipv4", "ipv6"):
+        if family == "ipv6" and not ipv6_enabled:
+            continue
+        status = last_check.get("families", {}).get(family)
+        if status is None:
+            status = (
+                "success"
+                if last_check.get("result") == "success"
+                or last_check.get("providers", {}).get(family)
+                else "failure"
+            )
+        details = observed.get(family)
+        if details and status == "success" and details.get("value"):
+            result[family] = details["value"]
+    return result
 
 
 def change_balloon_message(actions: list[dict[str, Any]]) -> str | None:
@@ -186,13 +227,10 @@ class StatusWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir)))
 
     def copy_ip(self) -> None:
-        values = [
-            item.get("value", "")
-            for item in read_state(state_path()).get("last_observed", {}).values()
-        ]
+        values = current_addresses(read_state(state_path()), self.scheduler.config.ipv6)
         clipboard = QApplication.clipboard()
         if clipboard:
-            clipboard.setText("\n".join(values))
+            clipboard.setText("\n".join(values.values()))
 
     def update_state(self, state: dict[str, Any], actions: list[dict[str, Any]]) -> None:
         observed = state.get("last_observed", {})
@@ -321,7 +359,7 @@ class ThunderWatchApp:
         self._automatic_update_timer.timeout.connect(self._automatic_update_check)
         self.server = QLocalServer()
         self.app.aboutToQuit.connect(self._wait_for_workers)
-        name = f"thunderwatch-{os.getuid() if hasattr(os, 'getuid') else 'user'}"
+        name = instance_server_name()
         if not claim_local_server(
             self.server, name, notify_running_instance, QLocalServer.removeServer
         ):
@@ -335,8 +373,11 @@ class ThunderWatchApp:
                 return
         config = Config.from_store(self.settings)
         self.scheduler = Scheduler(config)
+        self._background_portal = QtBackgroundPortal() if os.environ.get("FLATPAK_ID") else None
+        if self._background_portal:
+            self._background_portal.request_failed.connect(self._background_portal_failed)
         try:
-            set_autostart(config.autostart)
+            set_autostart(config.autostart, portal_client=self._background_portal)
         except Exception as exc:
             logger.exception("Could not configure automatic startup")
             self._autostart_error = str(exc)
@@ -377,12 +418,22 @@ class ThunderWatchApp:
             )
         self.window = StatusWindow(self.scheduler, self.send_test_email, self.open_settings)
         self.scheduler.state_changed.connect(self.refresh_tray)
+        self.tray.messageClicked.connect(self.show_status)
+        self.refresh_tray(read_state(state_path()), [])
         self._automatic_updates = config.automatic_updates
         if show:
             QTimer.singleShot(0, self.show_status)
         self._tray_timer.start()
         self._poll_tray()
         schedule_automatic_update(self._automatic_update_timer, config.automatic_updates)
+
+    def _background_portal_failed(self, message: str) -> None:
+        self._autostart_error = message
+        logger.warning("Automatic startup was not registered: %s", message)
+        if self.tray:
+            self.tray.showMessage(
+                "ThunderWatch startup registration", message, QSystemTrayIcon.MessageIcon.Warning
+            )
 
     def _poll_tray(self) -> None:
         state = tray_wait_state(QSystemTrayIcon.isSystemTrayAvailable(), self._tray_elapsed)
@@ -479,6 +530,7 @@ class ThunderWatchApp:
             threads.append(self._update_dialog.worker)
         for thread in threads:
             if thread and thread.isRunning():
+                thread.requestInterruption()
                 thread.quit()
                 thread.wait()
 
@@ -507,11 +559,11 @@ class ThunderWatchApp:
     def refresh_tray(self, state: dict[str, Any], actions: list[dict[str, Any]]) -> None:
         if self.tray:
             result = state.get("last_check", {}).get("result", "unknown")
-            location = Config.from_store(self.settings).location
-            addresses = state.get("last_observed", {})
+            config = Config.from_store(self.settings)
+            location = config.location
+            addresses = current_addresses(state, config.ipv6)
             address_text = " · ".join(
-                f"{family.upper()}: {details.get('value', 'not available')}"
-                for family, details in addresses.items()
+                f"{family.upper()}: {value}" for family, value in addresses.items()
             )
             checked_at = state.get("last_check", {}).get("time", "Never")
             self.tray.setToolTip(
@@ -588,7 +640,7 @@ def main() -> int:
         window.close()
         tray.hide()
         return 0
-    name = f"thunderwatch-{os.getuid() if hasattr(os, 'getuid') else 'user'}"
+    name = instance_server_name()
     if notify_running_instance(name):
         return 0
     ThunderWatchApp(app, args.show)

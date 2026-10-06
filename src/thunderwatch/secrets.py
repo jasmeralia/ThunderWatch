@@ -98,7 +98,7 @@ def read_password(username: str, host: str, fallback: Path | None = None) -> str
             if result:
                 return cast(str, result)
         except Exception:
-            return None
+            pass
     try:
         if fallback and fallback.exists() and _fallback_matches_account(fallback, username, host):
             return fallback.read_text(encoding="utf-8")

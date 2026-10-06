@@ -520,7 +520,7 @@ def fetch_release_feed(  # noqa: PLR0912
     return parsed
 
 
-def verify_download(  # noqa: PLR0913
+def verify_download(  # noqa: PLR0912, PLR0913
     url: str,
     expected_size: int,
     expected_sha256: str,
@@ -528,6 +528,7 @@ def verify_download(  # noqa: PLR0913
     opener: Callable[[str], Any] | None = None,
     *,
     max_size: int = MAX_DOWNLOAD_SIZE,
+    cancelled: Callable[[], bool] | None = None,
 ) -> Path:
     """Stream an HTTPS asset to a temporary sibling, verify it, then publish it."""
     if not url.startswith("https://"):
@@ -551,7 +552,12 @@ def verify_download(  # noqa: PLR0913
             prefix=f".{target.name}.", suffix=".part", dir=target.parent, delete=False
         ) as output:
             temporary_path = Path(output.name)
-            while chunk := response.read(READ_CHUNK_SIZE):
+            while True:
+                if cancelled and cancelled():
+                    raise InterruptedError("update download cancelled")
+                chunk = response.read(READ_CHUNK_SIZE)
+                if not chunk:
+                    break
                 size += len(chunk)
                 if size > expected_size or size > max_size:
                     raise ValueError("download exceeded the expected size limit")
@@ -644,6 +650,7 @@ restore() {{
     if [ -e "$rollback" ]; then
         rm -f -- "$current"
         mv -- "$rollback" "$current"
+        nohup env PYINSTALLER_RESET_ENVIRONMENT=1 "$current" >/dev/null 2>&1 </dev/null &
     fi
 }}
 trap restore EXIT
@@ -719,15 +726,29 @@ def detect_package_type(  # noqa: PLR0911
     if env.get("SNAP"):
         return "snap"
     executable_path = Path(executable or sys.executable).resolve()
+    query_env = dict(env)
+    original_library_path = query_env.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original_library_path is None:
+        query_env.pop("LD_LIBRARY_PATH", None)
+    else:
+        query_env["LD_LIBRARY_PATH"] = original_library_path
     if shutil.which("dpkg-query"):
         result = subprocess.run(
-            ["dpkg-query", "-S", str(executable_path)], capture_output=True, text=True, check=False
+            ["dpkg-query", "-S", str(executable_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=query_env,
         )
         if result.returncode == 0 and "thunderwatch" in result.stdout.casefold():
             return "deb"
     if shutil.which("rpm"):
         result = subprocess.run(
-            ["rpm", "-qf", str(executable_path)], capture_output=True, text=True, check=False
+            ["rpm", "-qf", str(executable_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=query_env,
         )
         if result.returncode == 0 and "thunderwatch" in result.stdout.casefold():
             return "rpm"

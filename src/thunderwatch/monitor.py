@@ -107,11 +107,8 @@ def apply_lookup(
         history.append({"type": "lookups_recovered", "time": _stamp(now)})
     if candidates:
         history.append({"type": "change_detected", "time": _stamp(now), "changes": candidates})
-        kind = (
-            "send_started"
-            if all(change["old"] is None for change in candidates.values())
-            else "send_change"
-        )
+        has_any_baseline = any(new.get("last_reported", {}).values())
+        kind = "send_change" if has_any_baseline else "send_started"
         actions.append({"type": kind, "changes": candidates})
     new["pending"] = _merge_pending_changes(new, results, candidates, now)
     if failures:

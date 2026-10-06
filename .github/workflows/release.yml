@@ -47,7 +47,7 @@ jobs:
           previous_attempt=$((GITHUB_RUN_ATTEMPT - 1))
           failed_builds=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${previous_attempt}/jobs" \
             --paginate \
-            --jq '[.jobs[] | select(.conclusion == "failure" and (.name | startswith("Create or resolve version tag") or startswith("Build Windows") or startswith("Build and smoke-test Linux packages") or startswith("Linux packages (") or startswith("Verify and publish complete beta release"))) | .name] | unique | .[]')
+            --jq '[.jobs[] | select((.conclusion == "failure" or .conclusion == "cancelled") and (.name | startswith("Create or resolve version tag") or startswith("Build Windows") or startswith("Build and smoke-test Linux packages") or startswith("Linux packages (") or startswith("Verify and publish complete beta release"))) | .name] | unique | .[]')
           if [ -n "$failed_builds" ]; then
             echo 'failed=true' >> "$GITHUB_OUTPUT"
           else

@@ -140,9 +140,9 @@ Function KillRunningThunderWatch
   DetailPrint "Closing any running ThunderWatch processes before installing..."
   StrCpy $R0 0
   kill_loop_install:
-    ExecWait '"$SYSDIR\taskkill.exe" /IM "ThunderWatch.exe" /F /T' $0
+    ExecWait '"$SYSDIR\taskkill.exe" /FI "USERNAME eq $%USERDOMAIN%\$%USERNAME%" /IM "ThunderWatch.exe" /F /T' $0
     Sleep 500
-    nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ThunderWatch.exe" /NH | findstr /I "ThunderWatch.exe"'
+    nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ThunderWatch.exe" /FI "USERNAME eq $%USERDOMAIN%\$%USERNAME%" /NH | findstr /I "ThunderWatch.exe"'
     Pop $1 ; nsExec exit code
     Pop $2 ; captured command output
     ${If} $1 == 0
@@ -160,9 +160,9 @@ Function un.KillRunningThunderWatch
   DetailPrint "Closing any running ThunderWatch processes before uninstalling..."
   StrCpy $R0 0
   kill_loop_uninstall:
-    ExecWait '"$SYSDIR\taskkill.exe" /IM "ThunderWatch.exe" /F /T' $0
+    ExecWait '"$SYSDIR\taskkill.exe" /FI "USERNAME eq $%USERDOMAIN%\$%USERNAME%" /IM "ThunderWatch.exe" /F /T' $0
     Sleep 500
-    nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ThunderWatch.exe" /NH | findstr /I "ThunderWatch.exe"'
+    nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ThunderWatch.exe" /FI "USERNAME eq $%USERDOMAIN%\$%USERNAME%" /NH | findstr /I "ThunderWatch.exe"'
     Pop $1 ; nsExec exit code
     Pop $2 ; captured command output
     ${If} $1 == 0
@@ -189,4 +189,10 @@ Function .onInstFailed
   IfFileExists "$INSTDIR\ThunderWatch.exe" 0 rollback_relaunch_done
   Exec '"$INSTDIR\ThunderWatch.exe" --show'
   rollback_relaunch_done:
+FunctionEnd
+
+Function .onUserAbort
+  ${If} $R7 == "1"
+    Call .onInstFailed
+  ${EndIf}
 FunctionEnd
