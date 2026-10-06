@@ -347,6 +347,49 @@ def test_mixed_first_ipv6_observation_does_not_hide_ipv4_change():
     assert updated["pending"]["changes"]["ipv4"]["old"] == "9.9.9.9"
 
 
+def test_new_family_candidate_does_not_overwrite_pending_change_for_failed_family():
+    from thunderwatch.ipcheck import LookupResult
+
+    state = empty_state()
+    state["last_reported"] = {
+        "ipv4": {"value": "203.0.113.4", "time": "earlier"},
+        "ipv6": {"value": "2001:db8::/64", "time": "earlier"},
+    }
+    state["pending"] = {
+        "changes": {
+            "ipv4": {"old": "203.0.113.4", "new": "198.51.100.7", "providers": ["v4a", "v4b"]}
+        },
+        "detected_at": "earlier",
+        "last_error": "previous send failed",
+    }
+    updated, actions = apply_lookup(
+        state,
+        {
+            "ipv4": LookupResult("ipv4", None, error="temporarily offline"),
+            "ipv6": LookupResult("ipv6", "2001:db8:1::/64", ("v6a", "v6b")),
+        },
+        datetime.now(UTC),
+    )
+    assert set(updated["pending"]["changes"]) == {"ipv4", "ipv6"}
+    assert updated["pending"]["changes"]["ipv4"]["new"] == "198.51.100.7"
+    assert set(actions[0]["changes"]) == {"ipv6"}
+
+
+def test_delivery_clears_sent_family_but_preserves_other_pending_changes():
+    state = empty_state()
+    ipv6 = {"old": "2001:db8::/64", "new": "2001:db8:1::/64"}
+    state["pending"] = {
+        "changes": {
+            "ipv4": {"old": "203.0.113.4", "new": "198.51.100.7"},
+            "ipv6": ipv6,
+        },
+        "last_error": "previous send failed",
+    }
+    updated, _ = apply_delivery(state, True, datetime.now(UTC), sent_changes={"ipv6": ipv6})
+    assert set(updated["pending"]["changes"]) == {"ipv4"}
+    assert updated["last_reported"]["ipv6"]["value"] == "2001:db8:1::/64"
+
+
 def test_config_parses_qsettings_false_strings_as_false():
     from thunderwatch.config import Config
 

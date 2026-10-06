@@ -1,9 +1,10 @@
 # ThunderWatch design and implementation plan
 
 Status: implementation in progress. The Qt-free core, desktop shell, updater offer and
-verified-download flow, and synthetic tests exist. End-to-end package release,
-platform integration, and hands-on acceptance remain incomplete. Do not treat the
-current build as an operational IP monitor. ThunderWatch joins GaleFling, StormFuse,
+verified-download flow, release workflows, and synthetic tests exist. Package release
+CI has not yet completed an end-to-end run, and platform integration and hands-on
+acceptance remain incomplete. Do not treat the current build as an operational IP
+monitor. ThunderWatch joins GaleFling, StormFuse,
 and TempestTrace in the Storm Desktop Suite and reuses their
 framework, dark theme, updater, packaging, and CI conventions. TempestTrace is the
 primary template because it is the newest and smallest of the three.
@@ -16,10 +17,10 @@ Qt startup path, five-page setup wizard, status window, tray menu, and screensho
 The suite theme and icon are copied from TempestTrace. Core and updater tests use fake
 providers/SMTP and synthetic data.
 
-The design is not complete yet: native package installation and release CI,
-package-specific update handoff validation, some settings/status behavior, network
-online/resume triggers, and hands-on acceptance checks still need work. The README
-describes this as development software until those checks pass.
+The design is not complete yet: full native package installation acceptance,
+package-specific update handoff validation, some settings/status behavior,
+network-online/resume triggers, and hands-on acceptance checks still need work. The
+README describes this as development software until those checks pass.
 
 ## Goal and boundaries
 
@@ -476,11 +477,10 @@ Applied to `jasmeralia/ThunderWatch` to match the rest of the suite.
   Every master merge therefore produces a **prerelease**. Morgan promotes a validated
   prerelease to stable by hand.
 - `.github/workflows/linux-packages.yml`: TempestTrace's workflow minus the OBS and
-  Dropbox fixture steps. For each format it installs, runs `--smoke-test`, and
-  uninstalls. Flatpak adds a permissions assertion (network, StatusNotifierWatcher,
-  secrets, and *no* filesystem grants). Under `xvfb` with a fake
-  `StatusNotifierWatcher`, it also checks that a preconfigured instance starts
-  without opening a window.
+  Dropbox fixture steps. DEB and RPM install, run `--smoke-test`, and uninstall;
+  Flatpak and Snap install, run `--smoke-test`, and uninstall; AppImage runs its
+  smoke test directly. Flatpak also checks network, StatusNotifierWatcher, and
+  secrets permissions, with no filesystem grants.
 - **Codecov:** the repo must be active in Codecov for OIDC uploads. Confirm this when
   CI lands, before adding the required contexts.
 

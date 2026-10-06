@@ -58,6 +58,22 @@ def pending_balloon_transition(was_pending: bool, is_pending: bool) -> bool:
     return is_pending and not was_pending
 
 
+def change_balloon_message(actions: list[dict[str, Any]]) -> str | None:
+    if not any(action.get("type") == "delivered" for action in actions):
+        return None
+    changes: dict[str, Any] = next(
+        (action.get("changes", {}) for action in actions if action.get("type") == "send_change"),
+        {},
+    )
+    if not changes:
+        return None
+    family_names = {"ipv4": "IPv4", "ipv6": "IPv6 prefix"}
+    return "; ".join(
+        f"{family_names.get(family, family.upper())} changed to {change.get('new', '')}"
+        for family, change in changes.items()
+    )
+
+
 def schedule_automatic_update(timer: QTimer, enabled: bool, delay_ms: int = 30_000) -> None:
     if not enabled:
         timer.stop()
@@ -469,6 +485,10 @@ class ThunderWatchApp:
                 else "healthy"
             )
             self.tray.setIcon(badge_icon(None, icon_state))
+            if message := change_balloon_message(actions):
+                self.tray.showMessage(
+                    "ThunderWatch", message, QSystemTrayIcon.MessageIcon.Information
+                )
             if pending_balloon_transition(self._pending_alerted, pending):
                 self.tray.showMessage(
                     "ThunderWatch",

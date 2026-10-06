@@ -21,6 +21,7 @@ from .updater import (
     detect_package_type,
     fetch_release_feed,
     installed_version,
+    stage_appimage_update,
     verify_download,
     write_appimage_update_helper,
 )
@@ -155,17 +156,25 @@ class UpdateDialog(QDialog):
             return
         if os.environ.get("APPIMAGE"):
             current = Path(os.environ["APPIMAGE"]).resolve()
-            helper = path.with_suffix(".update.sh")
+            staged: Path | None = None
+            helper: Path | None = None
+            started = False
             try:
-                write_appimage_update_helper(current, path, helper, process_id=os.getpid())
+                staged = stage_appimage_update(current, path)
+                helper = staged.with_suffix(".update.sh")
+                write_appimage_update_helper(current, staged, helper, process_id=os.getpid())
                 result = QProcess.startDetached(str(helper), [])
-                started: bool = result[0] if isinstance(result, tuple) else bool(result)
+                started = result[0] if isinstance(result, tuple) else bool(result)
                 if not started:
-                    self.status_label.setText("Could not start AppImage update helper.")
-                    return
+                    raise RuntimeError("Could not start AppImage update helper.")
                 self._quit_application()
             except Exception as exc:
                 self.status_label.setText(f"Could not start AppImage update: {exc}")
+                if not started:
+                    if helper:
+                        helper.unlink(missing_ok=True)
+                    if staged:
+                        staged.unlink(missing_ok=True)
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
             self.status_label.setText(f"Downloaded {path}; open it to install the update.")

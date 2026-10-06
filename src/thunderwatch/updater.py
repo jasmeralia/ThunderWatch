@@ -573,6 +573,29 @@ def verify_download(  # noqa: PLR0913
             temporary_path.unlink()
 
 
+def stage_appimage_update(current_path: str | Path, downloaded_path: str | Path) -> Path:
+    """Copy a verified update beside the running AppImage for same-filesystem replacement."""
+    current = Path(current_path).absolute()
+    downloaded = Path(downloaded_path).absolute()
+    if current.is_symlink() or not current.is_file():
+        raise ValueError("current AppImage must be a regular file")
+    if downloaded.is_symlink() or not downloaded.is_file():
+        raise ValueError("downloaded AppImage must be a regular file")
+    descriptor, staged_name = tempfile.mkstemp(
+        prefix=f".{current.name}.thunderwatch-update-",
+        suffix=".AppImage",
+        dir=current.parent,
+    )
+    os.close(descriptor)
+    staged = Path(staged_name)
+    try:
+        shutil.copyfile(downloaded, staged)
+        return staged
+    except Exception:
+        staged.unlink(missing_ok=True)
+        raise
+
+
 def write_appimage_update_helper(
     current_path: str | Path,
     downloaded_path: str | Path,

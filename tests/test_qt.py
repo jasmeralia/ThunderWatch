@@ -193,6 +193,78 @@ def test_setup_finish_is_gated_by_successful_test_or_explicit_offline_save(app):
     wizard.close()
 
 
+def test_wizard_invalidates_successful_test_when_smtp_fields_change(app):
+    settings = QSettings("ThunderWatchTests", "WizardInvalidatesTest")
+    settings.clear()
+    settings.setValue("setup/complete", True)
+    wizard = SetupWizard(settings)
+    wizard.setStartId(4)
+    wizard.show()
+    app.processEvents()
+    wizard.test_succeeded = True
+    wizard.test_addresses = {"ipv4": "198.51.100.8"}
+    wizard.recipient.setText("different@example.com")
+    assert not wizard.test_succeeded
+    assert wizard.test_addresses == {}
+    assert not wizard.button(wizard.WizardButton.FinishButton).isEnabled()
+    wizard.close()
+
+
+def test_change_balloon_requires_a_successful_change_delivery():
+    from thunderwatch.app import change_balloon_message
+
+    actions = [
+        {"type": "send_change", "changes": {"ipv4": {"new": "198.51.100.8"}}},
+        {"type": "delivered"},
+    ]
+    assert change_balloon_message(actions) == "IPv4 changed to 198.51.100.8"
+    assert change_balloon_message(actions[:1]) is None
+
+
+def test_appimage_update_stages_download_beside_running_image(app, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from thunderwatch import update_dialog
+    from thunderwatch.update_dialog import UpdateDialog
+    from thunderwatch.updater import ReleaseAsset, UpdateOffer
+
+    offer = UpdateOffer(
+        "0.2.0",
+        False,
+        "notes",
+        "https://example.invalid/release",
+        ReleaseAsset("update.AppImage", "https://example.invalid/file", 10, "a" * 64),
+    )
+    current_dir = tmp_path / "mounted"
+    download_dir = tmp_path / "app-data" / "updates"
+    current_dir.mkdir()
+    download_dir.mkdir(parents=True)
+    current = current_dir / "ThunderWatch.AppImage"
+    current.write_bytes(b"old image")
+    downloaded = download_dir / "new.AppImage"
+    downloaded.write_bytes(b"verified new image")
+    calls = []
+    quits = []
+    monkeypatch.setenv("APPIMAGE", str(current))
+
+    def write_helper(current_path, staged, helper, *, process_id):
+        calls.append((Path(current_path), Path(staged), Path(helper), process_id))
+        return Path(helper)
+
+    monkeypatch.setattr(update_dialog, "write_appimage_update_helper", write_helper)
+    monkeypatch.setattr(update_dialog.QProcess, "startDetached", lambda *_args: True)
+    dialog = UpdateDialog(offer, lambda: quits.append(True))
+    dialog._downloaded(True, "verified", downloaded)
+    running, staged, helper, _pid = calls[0]
+    assert running == current
+    assert staged.parent == current.parent
+    assert staged.read_bytes() == b"verified new image"
+    assert helper.parent == current.parent
+    assert quits == [True]
+    staged.unlink()
+    dialog.close()
+
+
 def test_wizard_retest_clears_pending_change_already_reported_by_test_email(app, monkeypatch):
     from pathlib import Path
 

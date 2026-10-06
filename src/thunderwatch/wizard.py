@@ -129,6 +129,26 @@ class SetupWizard(QWizard):
         self.ipv6.setChecked(config.ipv6)
         self.autostart.setChecked(config.autostart)
         self.beta.setChecked(config.include_beta)
+        for field in (
+            self.host,
+            self.username,
+            self.password,
+            self.sender_edit,
+            self.recipient,
+            self.location,
+        ):
+            field.textChanged.connect(self._invalidate_test)
+        self.port.valueChanged.connect(self._invalidate_test)
+        self.security.currentTextChanged.connect(self._invalidate_test)
+        self.ipv6.toggled.connect(self._invalidate_test)
+        self._update_finish_button()
+
+    def _invalidate_test(self, *_args: object) -> None:
+        if not self.test_succeeded and not self.test_addresses:
+            return
+        self.test_succeeded = False
+        self.test_addresses = {}
+        self.test_status.setText("Settings changed; send a new test email.")
         self._update_finish_button()
 
     def _update_finish_button(self, *_args: object) -> None:
@@ -143,6 +163,9 @@ class SetupWizard(QWizard):
         return True
 
     def send_test_email(self) -> None:
+        self.test_succeeded = False
+        self.test_addresses = {}
+        self._update_finish_button()
         config = Config(
             setup_complete=True,
             smtp_host=self.host.text().strip(),

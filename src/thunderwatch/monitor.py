@@ -25,7 +25,34 @@ def discard_pending_families(state: dict[str, Any], disabled_families: set[str])
     return new
 
 
-def apply_lookup(  # noqa: PLR0912
+def _merge_pending_changes(
+    state: dict[str, Any],
+    results: dict[str, LookupResult],
+    candidates: dict[str, dict[str, Any]],
+    now: datetime,
+) -> dict[str, Any]:
+    pending = state.get("pending") or {}
+    changes = deepcopy(pending.get("changes", {}))
+    for family, result in results.items():
+        if not result.ok:
+            continue
+        baseline = state.get("last_reported", {}).get(family, {}).get("value")
+        if baseline == result.value:
+            changes.pop(family, None)
+        elif family in candidates:
+            changes[family] = candidates[family]
+    if not changes:
+        return {}
+    updated = deepcopy(pending)
+    updated["changes"] = changes
+    updated.setdefault("detected_at", _stamp(now))
+    if candidates:
+        updated["last_error"] = None
+        updated.pop("attempted_at", None)
+    return updated
+
+
+def apply_lookup(
     state: dict[str, Any], results: dict[str, LookupResult], now: datetime
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     new = deepcopy(state)
@@ -77,21 +104,13 @@ def apply_lookup(  # noqa: PLR0912
         history.append({"type": "lookups_recovered", "time": _stamp(now)})
     if candidates:
         history.append({"type": "change_detected", "time": _stamp(now), "changes": candidates})
-        new["pending"] = {"changes": candidates, "detected_at": _stamp(now), "last_error": None}
         kind = (
             "send_started"
             if all(change["old"] is None for change in candidates.values())
             else "send_change"
         )
         actions.append({"type": kind, "changes": candidates})
-    elif new.get("pending"):
-        pending = new["pending"]
-        for family, change in list(pending.get("changes", {}).items()):
-            family_result = results.get(family)
-            if family_result and family_result.ok and family_result.value == change.get("old"):
-                del pending["changes"][family]
-        if not pending.get("changes"):
-            new["pending"] = {}
+    new["pending"] = _merge_pending_changes(new, results, candidates, now)
     if failures:
         actions.append({"type": "retry"})
     new["history"] = history[-50:]
@@ -107,7 +126,7 @@ def apply_delivery(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     new = deepcopy(state)
     pending = new.get("pending") or {}
-    changes = sent_changes if sent_changes is not None else pending.get("changes", {})
+    changes = deepcopy(sent_changes if sent_changes is not None else pending.get("changes", {}))
     if not changes:
         return new, []
     if success:
@@ -115,12 +134,19 @@ def apply_delivery(
         for family, change in changes.items():
             reported[family] = {"value": change["new"], "time": _stamp(now)}
         current_changes = pending.get("changes", {})
-        if current_changes == changes:
-            new["pending"] = {}
-        elif pending:
-            for family, change in current_changes.items():
-                if family in changes and change.get("old") == changes[family].get("new"):
-                    change["old"] = changes[family]["new"]
+        for family, delivered in changes.items():
+            current = current_changes.get(family)
+            if not current:
+                continue
+            if current == delivered:
+                del current_changes[family]
+            elif current.get("old") == delivered.get("old"):
+                current["old"] = delivered["new"]
+        if pending:
+            if current_changes:
+                pending["changes"] = current_changes
+            else:
+                new["pending"] = {}
         new.setdefault("history", []).append(
             {"type": "email_sent", "time": _stamp(now), "changes": changes}
         )

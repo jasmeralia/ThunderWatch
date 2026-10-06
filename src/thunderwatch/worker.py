@@ -73,9 +73,10 @@ class CheckWorker(QObject):
                         self.config.smtp_recipient,
                         mail,
                     )
-                state, _ = apply_delivery(
+                state, delivery_actions = apply_delivery(
                     state, ok, datetime.now().astimezone(), message, action.get("changes")
                 )
+                actions.extend(delivery_actions)
                 write_state(state_path(), state)
         except Exception as exc:
             logger.exception("IP check worker failed")

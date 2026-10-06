@@ -28,8 +28,10 @@ public IP services or SMTP servers.
 The repository includes the Qt-free lookup, confirmation, state, configuration,
 secret-storage, and SMTP modules; an initial tray and setup UI; version selection and
 verified updater download helpers; and the shared Storm Desktop Suite icon and theme.
-The design's release CI and hands-on Windows/Linux package validation, package-specific
-update handoff checks, and network resume handling are still outstanding.
+The release workflows now build Windows and Linux packages and publish beta releases
+after successful master builds. The first complete release run and hands-on Windows/Linux
+package validation, package-specific update handoff checks, and network resume handling
+are still outstanding.
 
 ## Screenshots
 

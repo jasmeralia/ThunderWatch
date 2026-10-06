@@ -7,6 +7,18 @@ import pytest
 from scripts.release_info import main, next_patch, resolve_release
 
 
+def test_release_workflow_builds_and_publishes_after_master_tests() -> None:
+    workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+    assert "resolve-release:" in workflow
+    assert "create-release-tag:" in workflow
+    assert "windows-release:" in workflow
+    assert "linux-packages:" in workflow
+    assert "publish-release:" in workflow
+    assert "needs: [resolve-release, lint-and-test]" in workflow
+    assert "--prerelease" in workflow
+    assert "immutable existing assets" in workflow
+
+
 def test_first_release_starts_project_beta_series() -> None:
     assert next_patch(None) == "v0.1.0"
 
