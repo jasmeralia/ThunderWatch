@@ -1,9 +1,25 @@
 # ThunderWatch design and implementation plan
 
-Status: design stage. Nothing described here is implemented yet. ThunderWatch joins
-GaleFling, StormFuse, and TempestTrace in the Storm Desktop Suite and reuses their
+Status: implementation in progress. The Qt-free core, desktop shell, updater offer and
+verified-download flow, and synthetic tests exist. End-to-end package release,
+platform integration, and hands-on acceptance remain incomplete. Do not treat the
+current build as an operational IP monitor. ThunderWatch joins GaleFling, StormFuse,
+and TempestTrace in the Storm Desktop Suite and reuses their
 framework, dark theme, updater, packaging, and CI conventions. TempestTrace is the
 primary template because it is the newest and smallest of the three.
+
+## Implementation status
+
+Implemented files currently include `src/thunderwatch/ipcheck.py`, `monitor.py`,
+`notifier.py`, `state.py`, `config.py`, `secrets.py`, and `updater.py`, plus a first
+Qt startup path, five-page setup wizard, status window, tray menu, and screenshot tools.
+The suite theme and icon are copied from TempestTrace. Core and updater tests use fake
+providers/SMTP and synthetic data.
+
+The design is not complete yet: native package installation and release CI,
+package-specific update handoff validation, some settings/status behavior, network
+online/resume triggers, and hands-on acceptance checks still need work. The README
+describes this as development software until those checks pass.
 
 ## Goal and boundaries
 

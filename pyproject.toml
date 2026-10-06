@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thunderwatch"
+version = "0.0.0"
+description = "Public IP change monitor for the Storm Desktop Suite"
+requires-python = ">=3.14"
+license = "GPL-3.0-or-later"
+dependencies = ["PyQt6>=6.6,<7", "keyring>=25,<27"]
+
+[project.scripts]
+thunderwatch = "thunderwatch.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL"]
+ignore = ["PLR2004"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["src/thunderwatch", "scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "--strict-markers"
+
+[tool.ruff.lint.per-file-ignores]
+"tools/screenshots/*.py" = ["PLC0415", "PLR0915"]

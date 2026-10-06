@@ -1,7 +1,7 @@
 # ThunderWatch project instructions
 
 Read [docs/DESIGN.md](docs/DESIGN.md) before changing change detection, email
-notification, startup flow, packaging, or CI. This is a design-stage repository; do not
+notification, startup flow, packaging, or CI. This is an implementation-in-progress repository; do
 describe it as a working IP monitor until the acceptance checks are implemented and
 tested.
 
