@@ -114,6 +114,112 @@ def test_compose_started_and_test_subjects_include_location_and_current_address(
     assert "ipv4: 8.8.4.4" in test.get_content()
 
 
+def test_send_email_sets_message_headers_and_verified_tls_context():
+    import ssl
+    from email.message import EmailMessage
+
+    from thunderwatch.notifier import send_email
+
+    seen = {}
+
+    class SMTP:
+        def __init__(self, *args, **kwargs):
+            seen["context"] = kwargs.get("context")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def ehlo(self):
+            pass
+
+        def starttls(self, context=None):
+            seen["starttls_context"] = context
+
+        def login(self, *args):
+            pass
+
+        def send_message(self, message, **kwargs):
+            names = ("From", "To", "Date", "Message-ID")
+            seen["headers"] = {key: message.get(key) for key in names}
+            return {}
+
+    message = EmailMessage()
+    message["Subject"] = "Synthetic test"
+    ok, _ = send_email(
+        "smtp.example.com",
+        587,
+        "starttls",
+        "alerts@example.com",
+        "synthetic-password",
+        "alerts@example.com",
+        "you@example.com",
+        message,
+        smtp_factory=SMTP,
+    )
+    context = seen["starttls_context"]
+    assert ok
+    assert isinstance(context, ssl.SSLContext)
+    assert context.check_hostname
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert seen["headers"]["From"] == "alerts@example.com"
+    assert seen["headers"]["To"] == "you@example.com"
+    assert seen["headers"]["Date"]
+    assert seen["headers"]["Message-ID"]
+
+
+def test_check_worker_emits_failure_result_if_lookup_raises(monkeypatch):
+    from pathlib import Path
+
+    from thunderwatch import worker
+    from thunderwatch.config import Config
+
+    monkeypatch.setattr(worker, "state_path", lambda: Path("synthetic-state.json"))
+    monkeypatch.setattr(worker, "read_state", lambda _path: empty_state())
+    monkeypatch.setattr(worker, "write_state", lambda *_args: None)
+
+    def fail_lookup(*_args, **_kwargs):
+        raise OSError("disk/network failure")
+
+    monkeypatch.setattr(worker, "lookup", fail_lookup)
+    check = worker.CheckWorker(Config(ipv6=False))
+    results = []
+    check.finished.connect(lambda state, actions: results.append((state, actions)))
+    check.check()
+    assert len(results) == 1
+    assert results[0][0]["last_check"]["result"] == "failure"
+    assert any(action["type"] == "retry" for action in results[0][1])
+
+
+def test_check_worker_completes_if_state_persistence_raises(monkeypatch):
+    from pathlib import Path
+
+    from thunderwatch import worker
+    from thunderwatch.config import Config
+
+    monkeypatch.setattr(worker, "state_path", lambda: Path("synthetic-state.json"))
+    monkeypatch.setattr(worker, "read_state", lambda _path: empty_state())
+    monkeypatch.setattr(
+        worker,
+        "lookup",
+        lambda family, **_kwargs: LookupResult(family, "8.8.4.4", ("fake-a", "fake-b")),
+    )
+
+    def fail_write(*_args):
+        raise OSError("synthetic persistence failure")
+
+    monkeypatch.setattr(worker, "write_state", fail_write)
+    check = worker.CheckWorker(Config(ipv6=False))
+    results = []
+    check.finished.connect(lambda state, actions: results.append((state, actions)))
+    check.check()
+    assert len(results) == 1
+    assert results[0][0]["last_check"]["error"] == "OSError"
+    assert any(action["type"] == "retry" for action in results[0][1])
+
+
 def test_secret_store_prefers_keyring_and_reads_it_back(monkeypatch):
     class FakeKeyring:
         def __init__(self):

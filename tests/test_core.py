@@ -162,7 +162,7 @@ def test_smtp_refused_recipient_is_failure():
         def ehlo(self):
             pass
 
-        def starttls(self):
+        def starttls(self, context=None):
             pass
 
         def login(self, *args):
@@ -266,6 +266,50 @@ def test_confirmed_candidate_is_added_to_history():
     )
     assert state["history"][-1]["type"] == "change_detected"
     assert actions[0]["type"] == "send_started"
+
+
+def test_mixed_first_ipv6_observation_does_not_hide_ipv4_change():
+    from thunderwatch.ipcheck import LookupResult
+
+    state = empty_state()
+    state["last_reported"]["ipv4"] = {"value": "9.9.9.9", "time": "earlier"}
+    updated, actions = apply_lookup(
+        state,
+        {
+            "ipv4": LookupResult("ipv4", "8.8.4.4", ("v4a", "v4b")),
+            "ipv6": LookupResult("ipv6", "2001:4860:4860::/64", ("v6a", "v6b")),
+        },
+        datetime.now(UTC),
+    )
+    assert actions[0]["type"] == "send_change"
+    assert set(actions[0]["changes"]) == {"ipv4", "ipv6"}
+    assert updated["pending"]["changes"]["ipv4"]["old"] == "9.9.9.9"
+
+
+def test_config_parses_qsettings_false_strings_as_false():
+    from thunderwatch.config import Config
+
+    class Store:
+        def value(self, key, default=None):
+            values = {
+                "setup/complete": "true",
+                "smtp/host": "smtp.example.com",
+                "smtp/username": "alerts@example.com",
+                "smtp/from": "alerts@example.com",
+                "smtp/recipient": "you@example.com",
+                "monitor/ipv6": "false",
+                "startup/autostart": "false",
+                "updates/automatic": "false",
+                "updates/include_beta": "false",
+            }
+            return values.get(key, default)
+
+    config = Config.from_store(Store())
+    assert config.complete
+    assert not config.ipv6
+    assert not config.autostart
+    assert not config.automatic_updates
+    assert not config.include_beta
 
 
 def test_consecutive_failures_are_summarized_in_one_history_row():
@@ -409,6 +453,9 @@ def test_pending_balloon_is_only_shown_on_transition_into_pending():
 
 
 def test_auto_tls_port_465_uses_implicit_tls_factory_only():
+    import ssl
+    from email.message import EmailMessage
+
     calls = []
 
     class SMTP:
@@ -430,8 +477,8 @@ def test_auto_tls_port_465_uses_implicit_tls_factory_only():
         def send_message(self, *args, **kwargs):
             return {}
 
-    def ssl_factory(host, port, timeout):
-        calls.append((host, port, timeout))
+    def ssl_factory(host, port, timeout, context=None):
+        calls.append((host, port, timeout, context))
         return SMTP()
 
     ok, _ = send_email(
@@ -442,12 +489,14 @@ def test_auto_tls_port_465_uses_implicit_tls_factory_only():
         "pw",
         "from",
         "to",
-        object(),
+        EmailMessage(),
         smtp_factory=lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError()),
         ssl_factory=ssl_factory,
     )
     assert ok
-    assert calls[0] == ("smtp.example.com", 465, 30)
+    assert calls[0][:3] == ("smtp.example.com", 465, 30)
+    assert calls[0][3].check_hostname
+    assert calls[0][3].verify_mode == ssl.CERT_REQUIRED
     assert "starttls" not in calls
 
 

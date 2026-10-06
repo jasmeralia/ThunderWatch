@@ -73,6 +73,54 @@ def test_wizard_provider_preset_only_sets_server_fields(app, monkeypatch):
     wizard.close()
 
 
+def test_rerun_wizard_prefills_all_persisted_preferences(app):
+    settings = QSettings("ThunderWatchTests", "WizardAllPreferences")
+    settings.clear()
+    for key, value in {
+        "smtp/host": "smtp.example.com",
+        "smtp/port": 465,
+        "smtp/security": "ssl",
+        "smtp/username": "alerts@example.com",
+        "smtp/from": "alerts@example.com",
+        "smtp/recipient": "you@example.com",
+        "monitor/location": "Example Home",
+        "monitor/interval_minutes": 60,
+        "monitor/ipv6": False,
+        "startup/autostart": False,
+        "updates/include_beta": True,
+    }.items():
+        settings.setValue(key, value)
+    wizard = SetupWizard(settings)
+    assert wizard.security.currentText() == "ssl"
+    assert wizard.interval.value() == 60
+    assert not wizard.ipv6.isChecked()
+    assert not wizard.autostart.isChecked()
+    assert wizard.beta.isChecked()
+    wizard.close()
+
+
+def test_rerun_wizard_reapplies_saved_autostart_setting(app, monkeypatch):
+    from thunderwatch import wizard as wizard_module
+
+    settings = QSettings("ThunderWatchTests", "WizardAutostart")
+    settings.clear()
+    settings.setValue("setup/complete", True)
+    settings.setValue("startup/autostart", False)
+    wizard = SetupWizard(settings)
+    wizard.host.setText("smtp.example.com")
+    wizard.username.setText("alerts@example.com")
+    wizard.sender_edit.setText("alerts@example.com")
+    wizard.recipient.setText("you@example.com")
+    applied = []
+
+    def set_autostart(enabled):
+        applied.append(enabled)
+
+    monkeypatch.setattr(wizard_module, "set_autostart", set_autostart, raising=False)
+    wizard.accept()
+    assert applied == [False]
+
+
 def test_setup_finish_is_gated_by_successful_test_or_explicit_offline_save(app):
     settings = QSettings("ThunderWatchTests", "WizardFinishGate")
     settings.clear()
@@ -150,6 +198,85 @@ def test_settings_dialog_has_email_monitoring_startup_and_updates_tabs(app):
     dialog.close()
 
 
+def test_settings_dialog_keeps_saved_false_string_preferences_disabled(app):
+    from thunderwatch.settings_dialog import SettingsDialog
+
+    settings = QSettings("ThunderWatchTests", "SettingsFalseStrings")
+    settings.clear()
+    settings.setValue("updates/automatic", "false")
+    settings.setValue("monitor/ipv6", "false")
+    settings.setValue("startup/autostart", "false")
+    settings.setValue("updates/include_beta", "false")
+    dialog = SettingsDialog(settings)
+    assert not dialog.automatic.isChecked()
+    assert not dialog.ipv6.isChecked()
+    assert not dialog.autostart.isChecked()
+    assert not dialog.beta.isChecked()
+    dialog.close()
+
+
+def test_scheduler_retains_worker_until_thread_finishes(app, monkeypatch):
+    import gc
+
+    from PyQt6.QtCore import QObject, pyqtSignal
+
+    from thunderwatch import scheduler as scheduler_module
+
+    class Worker(QObject):
+        finished = pyqtSignal(dict, list)
+
+        def __init__(self, _config):
+            super().__init__()
+
+        def check(self):
+            pass
+
+    monkeypatch.setattr(scheduler_module, "CheckWorker", Worker)
+    scheduler = Scheduler(Config())
+    scheduler.run()
+    thread = scheduler._worker_thread
+    gc.collect()
+    try:
+        assert scheduler._worker is not None
+        assert thread is not None
+        scheduler._worker.finished.emit({"last_check": {"result": "success"}}, [])
+        assert thread.wait(2000)
+        app.processEvents()
+        assert scheduler._worker is None
+    finally:
+        if thread is not None and thread.isRunning():
+            thread.quit()
+            thread.wait(2000)
+        scheduler.timer.stop()
+
+
+def test_local_server_claim_removes_stale_socket_but_never_continues_unowned(monkeypatch):
+    from thunderwatch.app import claim_local_server
+
+    class Server:
+        def __init__(self, answers):
+            self.answers = iter(answers)
+            self.calls = 0
+
+        def listen(self, _name):
+            self.calls += 1
+            return next(self.answers)
+
+    removed = []
+    stale = Server([False, True])
+    assert claim_local_server(stale, "test", lambda _name: False, removed.append)
+    assert stale.calls == 2
+    assert removed == ["test"]
+
+    occupied = Server([False])
+    assert not claim_local_server(occupied, "test", lambda _name: True, removed.append)
+    assert occupied.calls == 1
+
+    unavailable = Server([False, False])
+    assert not claim_local_server(unavailable, "test", lambda _name: False, removed.append)
+    assert unavailable.calls == 2
+
+
 def test_settings_dialog_save_reconfigures_scheduler_interval(app, monkeypatch):
     from thunderwatch.config import Config
     from thunderwatch.scheduler import Scheduler
@@ -174,6 +301,10 @@ def test_desktop_shell_builds_tray_and_routes_without_setup(app, monkeypatch):
             self.newConnection = Signal()
 
         def listen(self, name):
+            return True
+
+        @staticmethod
+        def removeServer(name):
             return True
 
         def hasPendingConnections(self):

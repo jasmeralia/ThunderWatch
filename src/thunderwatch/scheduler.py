@@ -21,6 +21,7 @@ class Scheduler(QObject):
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.run)
+        self._worker: CheckWorker | None = None
         self._worker_thread: QThread | None = None
         QTimer.singleShot(15_000, self.run)
 
@@ -46,8 +47,14 @@ class Scheduler(QObject):
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._worker_stopped)
+        self._worker = worker
         self._worker_thread = thread
         thread.start()
+
+    def _worker_stopped(self) -> None:
+        self._worker = None
+        self._worker_thread = None
 
     def done(self, state: dict[str, Any], actions: list[dict[str, Any]]) -> None:
         self.running = False

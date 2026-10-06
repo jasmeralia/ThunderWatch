@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QWizardPage,
 )
 
+from .autostart import set_autostart
 from .config import Config
 from .monitor import _stamp
 from .paths import password_path, state_path
@@ -30,6 +31,7 @@ class SetupWizard(QWizard):
     def __init__(self, settings: QSettings):  # noqa: PLR0915
         super().__init__()
         self.settings = settings
+        config = Config.from_store(settings)
         self.setWindowTitle("ThunderWatch setup")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
         self.addPage(
@@ -115,12 +117,17 @@ class SetupWizard(QWizard):
         finish_form.addRow(self.save_offline)
         for page in (email, recipient, monitor, finish):
             self.addPage(page)
-        self.host.setText(str(settings.value("smtp/host", "")))
-        self.port.setValue(int(settings.value("smtp/port", 587)))
-        self.username.setText(str(settings.value("smtp/username", "")))
-        self.sender_edit.setText(str(settings.value("smtp/from", "")))
-        self.recipient.setText(str(settings.value("smtp/recipient", "")))
-        self.location.setText(str(settings.value("monitor/location", self.location.text())))
+        self.host.setText(config.smtp_host)
+        self.port.setValue(config.smtp_port)
+        self.security.setCurrentText(config.smtp_security)
+        self.username.setText(config.smtp_username)
+        self.sender_edit.setText(config.smtp_from)
+        self.recipient.setText(config.smtp_recipient)
+        self.location.setText(config.location or self.location.text())
+        self.interval.setValue(config.interval_minutes)
+        self.ipv6.setChecked(config.ipv6)
+        self.autostart.setChecked(config.autostart)
+        self.beta.setChecked(config.include_beta)
         self._update_finish_button()
 
     def _update_finish_button(self, *_args: object) -> None:
@@ -245,6 +252,10 @@ class SetupWizard(QWizard):
                 return
         for key, value in values.items():
             self.settings.setValue(key, value)
+        try:
+            set_autostart(self.autostart.isChecked())
+        except Exception as exc:
+            QMessageBox.warning(self, "Startup registration", str(exc))
         if self.test_succeeded and self.test_addresses:
             state = read_state(state_path())
             timestamp = _stamp(__import__("datetime").datetime.now().astimezone())

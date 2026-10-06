@@ -58,6 +58,31 @@ def pending_balloon_transition(was_pending: bool, is_pending: bool) -> bool:
     return is_pending and not was_pending
 
 
+def claim_local_server(
+    server: QLocalServer,
+    name: str,
+    notify_existing: Callable[[str], bool],
+    remove_stale: Callable[[str], bool],
+) -> bool:
+    """Claim the local-server name, cleaning stale sockets without duplicating a live app."""
+    if server.listen(name):
+        return True
+    if notify_existing(name):
+        return False
+    remove_stale(name)
+    return server.listen(name)
+
+
+def notify_running_instance(name: str) -> bool:
+    socket = QLocalSocket()
+    socket.connectToServer(name)
+    if not socket.waitForConnected(500):
+        return False
+    socket.write(b"show")
+    socket.flush()
+    return True
+
+
 class StatusWindow(QMainWindow):
     def __init__(
         self,
@@ -217,6 +242,9 @@ class ThunderWatchApp:
         self.scheduler: Scheduler | None = None
         self.tray: QSystemTrayIcon | None = None
         self.window: StatusWindow | None = None
+        self._test_worker: TestEmailWorker | None = None
+        self._test_thread: QThread | None = None
+        self._update_worker: UpdateCheckWorker | None = None
         self._update_thread: QThread | None = None
         self._update_manual = False
         self._pending_alerted = False
@@ -226,7 +254,11 @@ class ThunderWatchApp:
         self._tray_timer.timeout.connect(self._poll_tray)
         self.server = QLocalServer()
         name = f"thunderwatch-{os.getuid() if hasattr(os, 'getuid') else 'user'}"
-        self.server.listen(name)
+        if not claim_local_server(
+            self.server, name, notify_running_instance, QLocalServer.removeServer
+        ):
+            QTimer.singleShot(0, app.quit)
+            return
         self.server.newConnection.connect(self.show_status)
         if should_setup(self.settings):
             wizard = SetupWizard(self.settings)
@@ -316,6 +348,8 @@ class ThunderWatchApp:
             self.window.copy_ip()
 
     def send_test_email(self, *args: object) -> None:
+        if self._test_thread and self._test_thread.isRunning():
+            return
         config = Config.from_store(self.settings)
         thread = QThread()
         worker = TestEmailWorker(config)
@@ -324,9 +358,15 @@ class ThunderWatchApp:
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._test_worker_stopped)
+        self._test_worker = worker
         self._test_thread = thread
         thread.started.connect(worker.run)
         thread.start()
+
+    def _test_worker_stopped(self) -> None:
+        self._test_worker = None
+        self._test_thread = None
 
     def _test_email_done(self, success: bool, message: str) -> None:
         icon = QMessageBox.Icon.Information if success else QMessageBox.Icon.Warning
@@ -338,6 +378,9 @@ class ThunderWatchApp:
         QTimer.singleShot(24 * 60 * 60 * 1000, self._automatic_update_check)
 
     def check_for_updates(self, manual: bool = True) -> None:
+        if self._update_thread and self._update_thread.isRunning():
+            self._update_manual = self._update_manual or manual
+            return
         self._update_manual = manual
         worker = UpdateCheckWorker(Config.from_store(self.settings))
         thread = QThread()
@@ -346,9 +389,15 @@ class ThunderWatchApp:
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._update_worker_stopped)
+        self._update_worker = worker
         self._update_thread = thread
         thread.started.connect(worker.run)
         thread.start()
+
+    def _update_worker_stopped(self) -> None:
+        self._update_worker = None
+        self._update_thread = None
 
     def _update_check_finished(self, offer: object, error: str) -> None:
         if error:
@@ -438,11 +487,7 @@ def main() -> int:
         return 0
     configure_logging()
     name = f"thunderwatch-{os.getuid() if hasattr(os, 'getuid') else 'user'}"
-    socket = QLocalSocket()
-    socket.connectToServer(name)
-    if socket.waitForConnected(500):
-        socket.write(b"show")
-        socket.flush()
+    if notify_running_instance(name):
         return 0
     ThunderWatchApp(app, args.show)
     return app.exec()

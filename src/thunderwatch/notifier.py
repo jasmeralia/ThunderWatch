@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import smtplib
+import ssl
 from collections.abc import Callable
 from datetime import UTC, datetime
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from typing import Any
 
 SMTPFactory = Callable[..., Any]
@@ -79,13 +81,23 @@ def send_email(  # noqa: PLR0913, PLR0917
 ) -> tuple[bool, str]:
     implicit_tls = security == "ssl" or (security == "auto" and port == 465)
     try:
-        factory = (
+        context = ssl.create_default_context()
+        message["From"] = sender
+        message["To"] = recipient
+        message["Date"] = formatdate(localtime=True)
+        message["Message-ID"] = make_msgid()
+        factory: SMTPFactory = (
             (ssl_factory or smtplib.SMTP_SSL) if implicit_tls else (smtp_factory or smtplib.SMTP)
         )
-        with factory(host, port, timeout=30) as smtp:
+        smtp_client = (
+            factory(host, port, timeout=30, context=context)
+            if implicit_tls
+            else factory(host, port, timeout=30)
+        )
+        with smtp_client as smtp:
             if not implicit_tls:
                 smtp.ehlo()
-                smtp.starttls()
+                smtp.starttls(context=context)
                 smtp.ehlo()
             smtp.login(username, password)
             refused = smtp.send_message(message, from_addr=sender, to_addrs=[recipient])

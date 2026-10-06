@@ -13,6 +13,20 @@ class SettingsStore(Protocol):
     def value(self, key: str, default: Any = None) -> Any: ...
 
 
+def _setting_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    return default
+
+
 @dataclass(frozen=True)
 class Config:
     setup_complete: bool = False
@@ -44,7 +58,7 @@ class Config:
     @classmethod
     def from_store(cls, store: SettingsStore) -> Config:
         return cls(
-            setup_complete=bool(store.value("setup/complete", False)),
+            setup_complete=_setting_bool(store.value("setup/complete", False), False),
             smtp_host=str(store.value("smtp/host", "")),
             smtp_port=int(store.value("smtp/port", 587)),
             smtp_security=str(store.value("smtp/security", "auto")),
@@ -53,8 +67,8 @@ class Config:
             smtp_recipient=str(store.value("smtp/recipient", "")),
             location=str(store.value("monitor/location", "")),
             interval_minutes=int(store.value("monitor/interval_minutes", 10)),
-            ipv6=bool(store.value("monitor/ipv6", True)),
-            autostart=bool(store.value("startup/autostart", True)),
-            automatic_updates=bool(store.value("updates/automatic", True)),
-            include_beta=bool(store.value("updates/include_beta", False)),
+            ipv6=_setting_bool(store.value("monitor/ipv6", True), True),
+            autostart=_setting_bool(store.value("startup/autostart", True), True),
+            automatic_updates=_setting_bool(store.value("updates/automatic", True), True),
+            include_beta=_setting_bool(store.value("updates/include_beta", False), False),
         )

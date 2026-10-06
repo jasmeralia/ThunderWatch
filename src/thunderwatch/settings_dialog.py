@@ -31,6 +31,7 @@ class SettingsDialog(QDialog):
     def __init__(self, settings: QSettings) -> None:  # noqa: PLR0915
         super().__init__()
         self.settings = settings
+        config = Config.from_store(settings)
         self._test_thread: QThread | None = None
         self._test_worker: TestEmailWorker | None = None
         self.setWindowTitle("ThunderWatch settings")
@@ -74,7 +75,7 @@ class SettingsDialog(QDialog):
         self.interval.setRange(5, 720)
         self.interval.setValue(int(settings.value("monitor/interval_minutes", 10)))
         self.ipv6 = QCheckBox("Also monitor the IPv6 prefix")
-        self.ipv6.setChecked(bool(settings.value("monitor/ipv6", True)))
+        self.ipv6.setChecked(config.ipv6)
         form.addRow("Location label", self.location)
         form.addRow("Interval (minutes)", self.interval)
         form.addRow(self.ipv6)
@@ -82,15 +83,15 @@ class SettingsDialog(QDialog):
         startup = QWidget()
         form = QFormLayout(startup)
         self.autostart = QCheckBox("Start ThunderWatch when I sign in")
-        self.autostart.setChecked(bool(settings.value("startup/autostart", True)))
+        self.autostart.setChecked(config.autostart)
         form.addRow(self.autostart)
         self.tabs.addTab(startup, "Startup")
         updates = QWidget()
         form = QFormLayout(updates)
         self.automatic = QCheckBox("Check automatically")
-        self.automatic.setChecked(bool(settings.value("updates/automatic", True)))
+        self.automatic.setChecked(config.automatic_updates)
         self.beta = QCheckBox("Include beta updates")
-        self.beta.setChecked(bool(settings.value("updates/include_beta", False)))
+        self.beta.setChecked(config.include_beta)
         form.addRow(self.automatic)
         form.addRow(self.beta)
         self.tabs.addTab(updates, "Updates")

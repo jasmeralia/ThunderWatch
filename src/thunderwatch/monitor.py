@@ -68,7 +68,7 @@ def apply_lookup(  # noqa: PLR0912
         new["pending"] = {"changes": candidates, "detected_at": _stamp(now), "last_error": None}
         kind = (
             "send_started"
-            if any(change["old"] is None for change in candidates.values())
+            if all(change["old"] is None for change in candidates.values())
             else "send_change"
         )
         actions.append({"type": kind, "changes": candidates})
