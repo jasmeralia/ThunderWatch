@@ -63,7 +63,10 @@ class Scheduler(QObject):
         self.running = False
         run_requested = self._run_requested
         self._run_requested = False
-        failed = state.get("last_check", {}).get("result") != "success"
+        if "ipv4_failure_streak" in state:
+            failed = state["ipv4_failure_streak"] > 0
+        else:
+            failed = state.get("last_check", {}).get("result") != "success"
         self.failures = self.failures + 1 if failed else 0
         self.state_changed.emit(state, actions)
         delay = min(2 ** max(self.failures - 1, 0), 8) if failed else self.config.interval_minutes

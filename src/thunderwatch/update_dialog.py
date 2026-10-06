@@ -10,7 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QProcess, QThread, QUrl, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QCloseEvent, QDesktopServices
 from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout
 
 from .config import Config
@@ -106,6 +106,14 @@ class UpdateDialog(QDialog):
         self.download_button.clicked.connect(self.download)
         close.clicked.connect(self.close)
 
+    def closeEvent(self, event: QCloseEvent | None) -> None:
+        if event is None:
+            return
+        if self.worker and self.worker.isRunning():
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def download(self) -> None:
         folder = app_data() / "updates"
         folder.mkdir(parents=True, exist_ok=True)
@@ -126,7 +134,23 @@ class UpdateDialog(QDialog):
             return
         self.status_label.setText(message)
         if sys.platform == "win32":
-            subprocess.Popen([str(path)], close_fds=True)
+            flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            )
+            environment = os.environ.copy()
+            environment.pop("_MEIPASS2", None)
+            environment.pop("_PYI_APPLICATION_HOME_DIR", None)
+            environment["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            try:
+                subprocess.Popen(
+                    [str(path)],
+                    close_fds=True,
+                    creationflags=flags,
+                    env=environment,
+                )
+            except OSError as exc:
+                self.status_label.setText(f"Could not start installer: {exc}")
+                return
             self._quit_application()
             return
         if os.environ.get("APPIMAGE"):
@@ -134,7 +158,11 @@ class UpdateDialog(QDialog):
             helper = path.with_suffix(".update.sh")
             try:
                 write_appimage_update_helper(current, path, helper, process_id=os.getpid())
-                QProcess.startDetached(str(helper), [])
+                result = QProcess.startDetached(str(helper), [])
+                started: bool = result[0] if isinstance(result, tuple) else bool(result)
+                if not started:
+                    self.status_label.setText("Could not start AppImage update helper.")
+                    return
                 self._quit_application()
             except Exception as exc:
                 self.status_label.setText(f"Could not start AppImage update: {exc}")

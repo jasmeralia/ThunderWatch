@@ -54,7 +54,6 @@ SetCompressor /SOLID lzma
 
 Section "ThunderWatch" SecMain
   SectionIn RO
-  Call KillRunningThunderWatch
   StrCpy $R7 "0"
   StrCpy $R4 "0"
   StrCpy $R5 "0"
@@ -66,6 +65,7 @@ Section "ThunderWatch" SecMain
   CreateDirectory "$INSTDIR\.thunderwatch-upgrade-rollback"
   IfErrors prepare_failed
   StrCpy $R7 "1"
+  Call KillRunningThunderWatch
   !insertmacro BackupOwnedFile "ThunderWatch.exe"
   !insertmacro BackupOwnedFile "LICENSE"
   !insertmacro BackupOwnedFile "Uninstall.exe"
@@ -143,7 +143,8 @@ Function KillRunningThunderWatch
     ExecWait '"$SYSDIR\taskkill.exe" /IM "ThunderWatch.exe" /F /T' $0
     Sleep 500
     nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ThunderWatch.exe" /NH | findstr /I "ThunderWatch.exe"'
-    Pop $1
+    Pop $1 ; nsExec exit code
+    Pop $2 ; captured command output
     ${If} $1 == 0
       IntOp $R0 $R0 + 1
       ${If} $R0 >= 5
@@ -162,7 +163,8 @@ Function un.KillRunningThunderWatch
     ExecWait '"$SYSDIR\taskkill.exe" /IM "ThunderWatch.exe" /F /T' $0
     Sleep 500
     nsExec::ExecToStack 'cmd /C tasklist /FI "IMAGENAME eq ThunderWatch.exe" /NH | findstr /I "ThunderWatch.exe"'
-    Pop $1
+    Pop $1 ; nsExec exit code
+    Pop $2 ; captured command output
     ${If} $1 == 0
       IntOp $R0 $R0 + 1
       ${If} $R0 >= 5
@@ -184,4 +186,7 @@ Function .onInstFailed
   !insertmacro RestoreOwnedFile "LICENSE" $R5 LICENSE
   !insertmacro RestoreOwnedFile "Uninstall.exe" $R6 UNINSTALL
   RMDir "$INSTDIR\.thunderwatch-upgrade-rollback"
+  IfFileExists "$INSTDIR\ThunderWatch.exe" 0 rollback_relaunch_done
+  Exec '"$INSTDIR\ThunderWatch.exe" --show'
+  rollback_relaunch_done:
 FunctionEnd

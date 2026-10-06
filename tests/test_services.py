@@ -170,6 +170,51 @@ def test_send_email_sets_message_headers_and_verified_tls_context():
     assert seen["headers"]["Message-ID"]
 
 
+def test_send_email_is_success_when_quit_fails_after_server_accepted_message():
+    from email.message import EmailMessage
+    from smtplib import SMTPResponseException
+
+    from thunderwatch.notifier import send_email
+
+    class SMTP:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            raise SMTPResponseException(500, b"synthetic QUIT failure")
+
+        def ehlo(self):
+            pass
+
+        def starttls(self, **_kwargs):
+            pass
+
+        def login(self, *_args):
+            pass
+
+        def send_message(self, *_args, **_kwargs):
+            return {}
+
+    message = EmailMessage()
+    message["Subject"] = "Synthetic test"
+    ok, detail = send_email(
+        "smtp.example.com",
+        587,
+        "starttls",
+        "u",
+        "p",
+        "from@example.com",
+        "to@example.com",
+        message,
+        smtp_factory=SMTP,
+    )
+    assert ok
+    assert detail == "Email accepted"
+
+
 def test_check_worker_emits_failure_result_if_lookup_raises(monkeypatch):
     from pathlib import Path
 
@@ -361,16 +406,27 @@ def test_test_email_worker_reports_unavailable_password_without_sending(monkeypa
     assert results == [(False, "Email password unavailable")]
 
 
-def test_scheduler_partial_result_uses_retry_backoff_without_network():
+def test_scheduler_ipv6_only_failure_keeps_regular_interval():
     scheduler = Scheduler(Config(interval_minutes=10))
     states = []
     scheduler.state_changed.connect(lambda state, actions: states.append((state, actions)))
-    scheduler.done({"last_check": {"result": "partial"}}, [{"type": "retry"}])
-    assert scheduler.failures == 1
-    assert scheduler.timer.interval() == 60_000
-    scheduler.done({"last_check": {"result": "success"}}, [])
+    scheduler.done(
+        {"last_check": {"result": "partial"}, "ipv4_failure_streak": 0},
+        [{"type": "retry"}],
+    )
     assert scheduler.failures == 0
     assert scheduler.timer.interval() == 10 * 60_000
+    scheduler.timer.stop()
+
+
+def test_scheduler_ipv4_failure_uses_retry_backoff():
+    scheduler = Scheduler(Config(interval_minutes=10))
+    scheduler.done(
+        {"last_check": {"result": "partial"}, "ipv4_failure_streak": 1},
+        [{"type": "retry"}],
+    )
+    assert scheduler.failures == 1
+    assert scheduler.timer.interval() == 60_000
     scheduler.timer.stop()
 
 

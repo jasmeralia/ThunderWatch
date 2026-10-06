@@ -253,6 +253,7 @@ class ThunderWatchApp:
         self._test_thread: QThread | None = None
         self._update_worker: UpdateCheckWorker | None = None
         self._update_thread: QThread | None = None
+        self._update_dialog: UpdateDialog | None = None
         self._update_manual = False
         self._pending_alerted = False
         self._tray_elapsed = 0
@@ -263,6 +264,7 @@ class ThunderWatchApp:
         self._automatic_update_timer.setSingleShot(True)
         self._automatic_update_timer.timeout.connect(self._automatic_update_check)
         self.server = QLocalServer()
+        self.app.aboutToQuit.connect(self._wait_for_workers)
         name = f"thunderwatch-{os.getuid() if hasattr(os, 'getuid') else 'user'}"
         if not claim_local_server(
             self.server, name, notify_running_instance, QLocalServer.removeServer
@@ -360,7 +362,7 @@ class ThunderWatchApp:
         if self._test_thread and self._test_thread.isRunning():
             return
         config = Config.from_store(self.settings)
-        thread = QThread()
+        thread = QThread(self.app)
         worker = TestEmailWorker(config)
         worker.moveToThread(thread)
         worker.finished.connect(self._test_email_done)
@@ -396,7 +398,7 @@ class ThunderWatchApp:
             return
         self._update_manual = manual
         worker = UpdateCheckWorker(Config.from_store(self.settings))
-        thread = QThread()
+        thread = QThread(self.app)
         worker.moveToThread(thread)
         worker.finished.connect(self._update_check_finished)
         worker.finished.connect(thread.quit)
@@ -412,12 +414,27 @@ class ThunderWatchApp:
         self._update_worker = None
         self._update_thread = None
 
+    def _wait_for_workers(self) -> None:
+        threads = [self._test_thread, self._update_thread]
+        if self.scheduler and self.scheduler._worker_thread:
+            threads.append(self.scheduler._worker_thread)
+        if self._update_dialog and self._update_dialog.worker:
+            threads.append(self._update_dialog.worker)
+        for thread in threads:
+            if thread and thread.isRunning():
+                thread.quit()
+                thread.wait()
+
     def _update_check_finished(self, offer: object, error: str) -> None:
         if error:
             if self._update_manual:
                 QMessageBox.warning(None, "Update check failed", error)
             return
         if isinstance(offer, UpdateOffer):
+            if self._update_dialog and self._update_dialog.isVisible():
+                self._update_dialog.raise_()
+                self._update_dialog.activateWindow()
+                return
             if not self._update_manual and self.tray:
                 self.tray.showMessage(
                     "ThunderWatch update available",

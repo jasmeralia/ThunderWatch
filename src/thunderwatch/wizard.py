@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 
 from PyQt6.QtCore import QSettings, QThread
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -164,12 +165,25 @@ class SetupWizard(QWizard):
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._test_worker_stopped)
         self._test_worker = worker
         self._test_thread = thread
         self.test_button.setEnabled(False)
         self.test_status.setText("Looking up addresses and sending the test email…")
         thread.started.connect(worker.run)
         thread.start()
+
+    def _test_worker_stopped(self) -> None:
+        self._test_worker = None
+        self._test_thread = None
+
+    def closeEvent(self, event: QCloseEvent | None) -> None:
+        if event is None:
+            return
+        if self._test_thread and self._test_thread.isRunning():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def _test_finished(self, success: bool, message: str) -> None:
         if success and self._test_worker:
@@ -180,6 +194,8 @@ class SetupWizard(QWizard):
         self._update_finish_button()
 
     def reject(self) -> None:
+        if self._test_thread and self._test_thread.isRunning():
+            return
         if not self.settings.value("setup/complete", False):
             answer = QMessageBox.question(
                 self,
@@ -211,7 +227,9 @@ class SetupWizard(QWizard):
             self.port.setValue(port)
             self.security.setCurrentText(security)
 
-    def accept(self) -> None:
+    def accept(self) -> None:  # noqa: PLR0912
+        if self._test_thread and self._test_thread.isRunning():
+            return
         if not all(
             x.text().strip() for x in (self.host, self.username, self.sender_edit, self.recipient)
         ):
@@ -290,5 +308,13 @@ class SetupWizard(QWizard):
             timestamp = _stamp(__import__("datetime").datetime.now().astimezone())
             for family, value in self.test_addresses.items():
                 state.setdefault("last_reported", {})[family] = {"value": value, "time": timestamp}
+            pending = state.get("pending") or {}
+            changes = pending.get("changes", {})
+            for family, value in self.test_addresses.items():
+                change = changes.get(family)
+                if change and change.get("new") == value:
+                    del changes[family]
+            if pending and not changes:
+                state["pending"] = {}
             write_state(state_path(), state)
         super().accept()

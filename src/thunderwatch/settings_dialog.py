@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QSettings, QThread
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -126,17 +127,30 @@ class SettingsDialog(QDialog):
             )
             return
         worker = TestEmailWorker(config, password_override=self.password.text() or None)
-        thread = QThread()
+        thread = QThread(self)
         worker.moveToThread(thread)
         worker.finished.connect(self._test_finished)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._test_worker_stopped)
         self._test_worker = worker
         self._test_thread = thread
         self.test_button.setEnabled(False)
         thread.started.connect(worker.run)
         thread.start()
+
+    def _test_worker_stopped(self) -> None:
+        self._test_worker = None
+        self._test_thread = None
+
+    def closeEvent(self, event: QCloseEvent | None) -> None:
+        if event is None:
+            return
+        if self._test_thread and self._test_thread.isRunning():
+            event.ignore()
+            return
+        super().closeEvent(event)
 
     def _test_finished(self, success: bool, message: str) -> None:
         self.test_button.setEnabled(True)
@@ -149,6 +163,9 @@ class SettingsDialog(QDialog):
             self.accept()
 
     def _save(self) -> None:
+        if self._test_thread and self._test_thread.isRunning():
+            QMessageBox.warning(self, "Test still running", "Wait for the email test to finish.")
+            return
         config = Config(
             setup_complete=True,
             smtp_host=self.host.text().strip(),

@@ -80,6 +80,7 @@ def send_email(  # noqa: PLR0913, PLR0917
     ssl_factory: SMTPFactory | None = None,
 ) -> tuple[bool, str]:
     implicit_tls = security == "ssl" or (security == "auto" and port == 465)
+    accepted = False
     try:
         context = ssl.create_default_context()
         message["From"] = sender
@@ -103,7 +104,10 @@ def send_email(  # noqa: PLR0913, PLR0917
             refused = smtp.send_message(message, from_addr=sender, to_addrs=[recipient])
             if refused:
                 return False, "SMTP recipient was refused"
+            accepted = True
         return True, "Email accepted"
     except Exception as exc:  # SMTP implementations use many exception types.
+        if accepted:
+            return True, "Email accepted"
         text = str(exc).replace(password, "[redacted]") if password else str(exc)
         return False, text or type(exc).__name__

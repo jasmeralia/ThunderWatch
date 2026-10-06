@@ -7,6 +7,7 @@ from typing import ClassVar
 
 import pytest
 from PyQt6.QtCore import QSettings
+from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QPushButton
 
 from thunderwatch.app import StatusWindow, should_setup
@@ -190,6 +191,76 @@ def test_setup_finish_is_gated_by_successful_test_or_explicit_offline_save(app):
     wizard.save_offline.setChecked(True)
     assert wizard.validateCurrentPage()
     wizard.close()
+
+
+def test_wizard_retest_clears_pending_change_already_reported_by_test_email(app, monkeypatch):
+    from pathlib import Path
+
+    from thunderwatch import wizard as wizard_module
+
+    settings = QSettings("ThunderWatchTests", "WizardRetestPending")
+    settings.clear()
+    settings.setValue("setup/complete", True)
+    settings.setValue("smtp/host", "smtp.example.com")
+    settings.setValue("smtp/username", "alerts@example.com")
+    wizard = SetupWizard(settings)
+    wizard.host.setText("smtp.example.com")
+    wizard.username.setText("alerts@example.com")
+    wizard.sender_edit.setText("alerts@example.com")
+    wizard.recipient.setText("to@example.com")
+    wizard.setStartId(4)
+    wizard.show()
+    app.processEvents()
+    wizard.test_succeeded = True
+    wizard.test_addresses = {"ipv4": "198.51.100.5"}
+    state = {
+        "last_reported": {"ipv4": {"value": "198.51.100.4", "time": "old"}},
+        "pending": {
+            "changes": {"ipv4": {"old": "198.51.100.4", "new": "198.51.100.5"}},
+            "last_error": "synthetic SMTP failure",
+        },
+    }
+    monkeypatch.setattr(wizard_module, "read_state", lambda _path: state)
+    monkeypatch.setattr(wizard_module, "write_state", lambda _path, updated: state.update(updated))
+    monkeypatch.setattr(wizard_module, "set_autostart", lambda *_args: None)
+    monkeypatch.setattr(wizard_module, "state_path", lambda: Path("synthetic-state.json"))
+    wizard.accept()
+    assert state["last_reported"]["ipv4"]["value"] == "198.51.100.5"
+    assert state["pending"] == {}
+    wizard.close()
+
+
+@pytest.mark.parametrize("dialog_kind", ["wizard", "settings", "update"])
+def test_worker_dialog_refuses_close_while_thread_is_running(app, dialog_kind):
+    from thunderwatch.settings_dialog import SettingsDialog
+    from thunderwatch.update_dialog import UpdateDialog
+    from thunderwatch.updater import ReleaseAsset, UpdateOffer
+
+    class RunningThread:
+        def isRunning(self):
+            return True
+
+    settings = QSettings("ThunderWatchTests", f"ThreadClose-{dialog_kind}")
+    settings.clear()
+    if dialog_kind == "wizard":
+        dialog = SetupWizard(settings)
+        dialog._test_thread = RunningThread()
+    elif dialog_kind == "settings":
+        dialog = SettingsDialog(settings)
+        dialog._test_thread = RunningThread()
+    else:
+        offer = UpdateOffer(
+            "0.2.0",
+            False,
+            "notes",
+            "https://example.invalid/release",
+            ReleaseAsset("update.deb", "https://example.invalid/file", 10, "a" * 64),
+        )
+        dialog = UpdateDialog(offer)
+        dialog.worker = RunningThread()
+    event = QCloseEvent()
+    dialog.closeEvent(event)
+    assert not event.isAccepted()
 
 
 def test_update_dialog_shows_channel_release_notes_size_and_explicit_button(app):
@@ -489,6 +560,69 @@ def test_update_dialog_reports_download_failure_without_network(app):
     dialog.close()
 
 
+def test_windows_update_launch_resets_pyinstaller_environment_and_detaches(
+    app, tmp_path, monkeypatch
+):
+    from thunderwatch import update_dialog
+    from thunderwatch.update_dialog import UpdateDialog
+    from thunderwatch.updater import ReleaseAsset, UpdateOffer
+
+    offer = UpdateOffer(
+        "0.2.0",
+        False,
+        "notes",
+        "https://example.invalid/release",
+        ReleaseAsset("update.exe", "https://example.invalid/file", 10, "a" * 64),
+    )
+    launches = []
+    quit_calls = []
+    monkeypatch.setattr(update_dialog.sys, "platform", "win32")
+    monkeypatch.setattr(
+        update_dialog.subprocess, "Popen", lambda *args, **kwargs: launches.append((args, kwargs))
+    )
+    monkeypatch.setattr(update_dialog.subprocess, "DETACHED_PROCESS", 0x00000008, raising=False)
+    monkeypatch.setattr(
+        update_dialog.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, raising=False
+    )
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", "synthetic-temp")
+    monkeypatch.delenv("PYINSTALLER_RESET_ENVIRONMENT", raising=False)
+    dialog = UpdateDialog(offer, lambda: quit_calls.append(True))
+    dialog._downloaded(True, "verified", tmp_path / "installer.exe")
+    args, kwargs = launches[0]
+    assert args[0] == [str(tmp_path / "installer.exe")]
+    assert kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    assert kwargs["creationflags"] & update_dialog.subprocess.DETACHED_PROCESS
+    assert kwargs["creationflags"] & update_dialog.subprocess.CREATE_NEW_PROCESS_GROUP
+    assert kwargs["env"].get("_PYI_APPLICATION_HOME_DIR") is None
+    assert quit_calls == [True]
+    dialog.close()
+
+
+def test_appimage_update_launch_failure_keeps_application_running(app, tmp_path, monkeypatch):
+    from thunderwatch import update_dialog
+    from thunderwatch.update_dialog import UpdateDialog
+    from thunderwatch.updater import ReleaseAsset, UpdateOffer
+
+    offer = UpdateOffer(
+        "0.2.0",
+        False,
+        "notes",
+        "https://example.invalid/release",
+        ReleaseAsset("update.AppImage", "https://example.invalid/file", 10, "a" * 64),
+    )
+    quits = []
+    monkeypatch.setenv("APPIMAGE", str(tmp_path / "old.AppImage"))
+    monkeypatch.setattr(
+        update_dialog, "write_appimage_update_helper", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(update_dialog.QProcess, "startDetached", lambda *_args: False)
+    dialog = UpdateDialog(offer, lambda: quits.append(True))
+    dialog._downloaded(True, "verified", tmp_path / "new.AppImage")
+    assert quits == []
+    assert "Could not start AppImage update" in dialog.status_label.text()
+    dialog.close()
+
+
 def test_update_dialog_removes_previous_artifacts_before_retry(app, tmp_path, monkeypatch):
     from thunderwatch import update_dialog
     from thunderwatch.update_dialog import UpdateDialog
@@ -517,6 +651,9 @@ def test_update_dialog_removes_previous_artifacts_before_retry(app, tmp_path, mo
 
         def start(self):
             starts.append(self.destination)
+
+        def isRunning(self):
+            return False
 
     class Signal:
         def connect(self, _callback):

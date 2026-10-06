@@ -98,8 +98,10 @@ triggers an email and never overwrites the stored address.
 
 - First check runs 15 s after launch, giving sign-in networking time to come up.
 - Regular interval: 10 minutes by default, configurable from 5 to 720 minutes.
-- After a failure or an inconclusive result, retry after 1, 2, 4, then 8 minutes,
-  capped at the regular interval. The first success restores the normal interval.
+- After an IPv4 failure or inconclusive result, retry after 1, 2, 4, then 8 minutes,
+  capped at the regular interval. An IPv6-only failure keeps the regular interval because
+  IPv6 may be unavailable on the network. The first successful IPv4 check restores the
+  normal interval.
 - Check immediately when `QNetworkInformation` reports reachability becoming online,
   and after a suspend/resume. Detect resume as a wall-clock gap of more than twice
   the interval between timer ticks.
