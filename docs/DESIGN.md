@@ -316,7 +316,8 @@ behavior matches TempestTrace's "Updates and release channels" section:
   - `build/ThunderWatch.spec`, `build/installer.nsi`.
   - `packaging/linux/` (`build-packages.sh`, `.desktop`, Flatpak manifest,
     `snapcraft.yaml`, README).
-  - `resources/icons/`, `tools/screenshots/`, `docs/`.
+  - `resources/icons/`, `tools/screenshots/` (README and wizard-step generators),
+    `docs/` (including `docs/images/` and `docs/SETUP_WIZARD.md`).
 
   The tooling mirrors TempestTrace's: `Makefile` targets `deps`, `lint`, `lintfix`,
   `test`, `run`, and `screenshots`, plus `pyproject.toml`, `requirements-dev.txt`,
@@ -334,6 +335,57 @@ behavior matches TempestTrace's "Updates and release channels" section:
   - Snap plugs: `network`, `desktop`, `wayland`, `x11`, and `password-manager-service`.
     The release notes document `sudo snap connect
     thunderwatch:password-manager-service`.
+
+## README screenshots
+
+Use the same approach as the other suite apps: capture screenshots from the real Qt
+widgets, rendered offscreen with synthetic data, and embed them in the README.
+
+- **`tools/screenshots/generate_readme_screenshots.py`:** modeled on TempestTrace's and
+  StormFuse's generators. Before importing Qt or app modules, it points `HOME`,
+  `XDG_CONFIG_HOME`, `APPDATA`, and `LOCALAPPDATA` at a temporary scratch directory
+  and sets `QT_QPA_PLATFORM=offscreen`. It also redirects `QSettings` to an INI file
+  in that directory and installs an in-memory `keyring` backend, so the user's real
+  settings, keyring, and state are never read or written. It removes the scratch
+  directory afterwards.
+  - **Synthetic data only.** The location label is "Example Home", the SMTP account is
+    `alerts@example.com`, and the recipient is `you@example.com`. The password field
+    shows only its mask. IPs come from the documentation ranges (`203.0.113.0/24`,
+    `198.51.100.0/24`, `2001:db8::/32`). Timestamps are fixed so reruns produce
+    stable images.
+  - The generator fills the UI's state and history models directly instead of running
+    lookups, because `ipcheck` correctly rejects documentation addresses as
+    non-global. It never contacts IP providers, SMTP, or GitHub, and runs with
+    updates disabled, as TempestTrace does.
+  - It writes to `docs/images/`:
+    - `status-window.png`: healthy, with a history that includes a confirmed change
+      and its sent email.
+    - `status-pending.png`: a change whose email is waiting to be sent, with an SMTP
+      error shown.
+    - `tray-menu.png`: the tray context menu, captured with `QMenu.grab()`.
+    - `tray-states.png`: the icon in its healthy, amber, and red states, side by side
+      at an enlarged size.
+    - `settings-dialog.png`: the Email tab.
+    - `setup-wizard.png`: the Email server step.
+- **`tools/screenshots/generate_wizard_step_screenshots.py`:** GaleFling's pattern.
+  It captures one PNG per wizard page, in order, into `docs/images/wizard-steps/`
+  (`01-welcome.png` … `05-test-and-finish.png`). The last step shows a successful
+  test email and the current IPv4 and IPv6 prefix. These images feed
+  `docs/SETUP_WIZARD.md`, a step-by-step walkthrough linked from the README.
+- **`make screenshots`** (depends on `deps`) runs both generators with
+  `QT_QPA_PLATFORM=offscreen`. `make lint` runs ruff over `tools/screenshots/` as
+  well.
+- **README "Screenshots" section:** says the images come from the real interface with
+  synthetic data and no real addresses or credentials. It embeds the status window,
+  tray menu and states, settings, and wizard images with a one-line caption each,
+  links to `docs/SETUP_WIZARD.md`, and ends with "Regenerate with `make screenshots`
+  after UI changes."
+- **No silent rot:** a pytest test imports both generators and runs their capture
+  functions into `tmp_path`. It checks that every expected PNG exists and is
+  non-empty, and that the real `QSettings` and keyring were never touched. A UI
+  refactor that breaks screenshot capture therefore fails CI.
+- A PR that visibly changes the status window, tray menu, settings, or wizard must
+  regenerate and commit the affected images in the same PR.
 
 ## Repository and CI configuration
 
@@ -451,11 +503,13 @@ providers or SMTP servers.
    branch protection.
 3. **Core:** `ipcheck`, `monitor`, `state`, `notifier`, `config`, `secrets`, test first.
 4. **Qt app:** theme, tray, scheduler and worker, wizard, settings dialog, status
-   window, single instance, autostart.
+   window, single instance, autostart. Add the screenshot generators and their pytest
+   guard, then commit the first `docs/images/` set, the README "Screenshots" section,
+   and `docs/SETUP_WIZARD.md`.
 5. **Updater:** port TempestTrace's updater and update dialog, with beta-channel
    gating.
 6. **Packaging and release:** PyInstaller spec, NSIS, Linux packages, the full release
-   workflow publishing prereleases, and README screenshots.
+   workflow publishing prereleases. Regenerate the screenshots if the UI changed.
 7. **Hands-on validation:** install the first prerelease on Rin's Windows PC.
    Confirm start at sign-in goes straight to the tray, the test email arrives, and a
    simulated change emails correctly (via a debug override of the provider list). Then
@@ -475,6 +529,9 @@ providers or SMTP servers.
   offers the newest prerelease.
 - Every master merge publishes a prerelease with the Windows installer, all 10 Linux
   packages, and `SHA256SUMS`, after the smoke tests pass.
+- `make screenshots` regenerates every README and wizard-step image offscreen from
+  synthetic data, without touching real settings, the keyring, or the network. The
+  README embeds those images.
 - PRs cannot merge with unresolved review threads, a pending Copilot review, or a
   failing `Lint & Test`, `codecov/project`, or `codecov/patch`.
 

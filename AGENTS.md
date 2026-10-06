@@ -20,7 +20,10 @@ implement the behavior, then refactor with the tests green. Add a regression tes
 fixing a discovered bug.
 
 Before a code PR, run `make lint` and `make test`. Keep README and design docs current
-with user-facing changes.
+with user-facing changes. When a PR visibly changes the status window, tray menu,
+settings dialog, or setup wizard, run `make screenshots` and commit the regenerated
+`docs/images/` files in the same PR. Screenshots must use synthetic data only (example.com
+accounts, documentation IP ranges), never real addresses or credentials.
 
 Successful master builds publish beta prereleases. Morgan promotes a validated
 prerelease to a full release manually using the same tag and assets. CI must never
