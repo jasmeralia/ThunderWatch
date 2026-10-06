@@ -137,6 +137,25 @@ def test_password_file_requires_opt_in_and_uses_owner_only_permissions(tmp_path,
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_password_file_is_created_with_owner_only_mode(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from thunderwatch import secrets
+
+    opened = []
+    original_open = secrets.os.open
+
+    def recording_open(path, flags, mode=0o777, *args, **kwargs):
+        if Path(path) == tmp_path / "password":
+            opened.append(mode)
+        return original_open(path, flags, mode, *args, **kwargs)
+
+    monkeypatch.setattr(secrets, "_keyring", lambda: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(secrets.os, "open", recording_open)
+    secrets.store_password("user", "host", "pw", tmp_path / "password", allow_file=True)
+    assert opened == [0o600]
+
+
 def test_desktop_autostart_uses_appimage_path():
     from thunderwatch.autostart import desktop_file
 

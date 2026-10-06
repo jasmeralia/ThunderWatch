@@ -42,9 +42,16 @@ def store_password(
     if not allow_file or fallback is None:
         raise RuntimeError("No usable keyring; opt in to the private password file")
     fallback.parent.mkdir(parents=True, exist_ok=True)
-    fallback.write_text(password, encoding="utf-8")
-    if sys.platform != "win32":
-        os.chmod(fallback, 0o600)
+    if sys.platform == "win32":
+        fallback.write_text(password, encoding="utf-8")
+        return
+    fd = os.open(fallback, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8", closefd=False) as password_file:
+            password_file.write(password)
+    finally:
+        os.close(fd)
 
 
 def read_password(username: str, host: str, fallback: Path | None = None) -> str | None:

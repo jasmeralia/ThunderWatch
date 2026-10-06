@@ -315,6 +315,39 @@ def test_worker_runs_fake_lookup_and_delivery_and_persists_after_acceptance(monk
     assert results[0][0]["pending"] == {}
 
 
+def test_change_email_uses_installed_application_version(monkeypatch):
+    versions = []
+    monkeypatch.setattr("thunderwatch.worker.state_path", lambda: Path("synthetic-state.json"))
+    monkeypatch.setattr("thunderwatch.worker.password_path", lambda: Path("synthetic-password"))
+    monkeypatch.setattr("thunderwatch.worker.read_state", lambda _path: empty_state())
+    monkeypatch.setattr("thunderwatch.worker.write_state", lambda *_args: None)
+    monkeypatch.setattr(
+        "thunderwatch.worker.lookup",
+        lambda family, **kwargs: LookupResult(family, "8.8.4.4", ("fake-a", "fake-b")),
+    )
+    monkeypatch.setattr("thunderwatch.worker.read_password", lambda *_args: "synthetic-password")
+    monkeypatch.setattr("thunderwatch.worker.installed_version", lambda: "1.2.3")
+
+    def capture_email(_kind, _location, _hostname, version, *_args, **_kwargs):
+        versions.append(version)
+        return object()
+
+    monkeypatch.setattr("thunderwatch.worker.compose_email", capture_email)
+    monkeypatch.setattr("thunderwatch.worker.send_email", lambda *_args: (True, "accepted"))
+    worker = CheckWorker(
+        Config(
+            setup_complete=True,
+            smtp_host="smtp.example.com",
+            smtp_username="alerts@example.com",
+            smtp_from="from@example.com",
+            smtp_recipient="to@example.com",
+            ipv6=False,
+        )
+    )
+    worker.check()
+    assert versions == ["1.2.3"]
+
+
 def test_test_email_worker_reports_unavailable_password_without_sending(monkeypatch):
     monkeypatch.setattr("thunderwatch.worker.read_password", lambda *args: None)
     monkeypatch.setattr("thunderwatch.worker.password_path", lambda: Path("missing-password"))
@@ -366,6 +399,21 @@ def test_linux_autostart_creates_and_removes_desktop_entry(tmp_path, monkeypatch
     assert 'Exec="/opt/Thunder Watch/thunderwatch" --autostart' in desktop.read_text()
     set_autostart(False)
     assert not desktop.exists()
+
+
+def test_source_autostart_runs_module_instead_of_python_repl(tmp_path, monkeypatch):
+    from thunderwatch.autostart import set_autostart
+
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr("sys.frozen", False, raising=False)
+    monkeypatch.setattr("sys.executable", "/venv/bin/python")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.delenv("FLATPAK_ID", raising=False)
+    monkeypatch.delenv("SNAP", raising=False)
+    monkeypatch.delenv("APPIMAGE", raising=False)
+    set_autostart(True)
+    desktop = tmp_path / "autostart/thunderwatch.desktop"
+    assert 'Exec="/venv/bin/python" -m thunderwatch --autostart' in desktop.read_text()
 
 
 def test_snap_autostart_uses_snap_user_data(tmp_path, monkeypatch):

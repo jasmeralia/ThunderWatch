@@ -40,6 +40,7 @@ def capture_readme(output_dir: str | Path) -> list[Path]:
         settings.setValue("smtp/from", "alerts@example.com")
         settings.setValue("smtp/recipient", "you@example.com")
         settings.setValue("monitor/location", "Example Home")
+        original_read_state = app_module.read_state
         app_module.read_state = lambda _path: {
             "last_observed": {},
             "last_reported": {},
@@ -144,6 +145,7 @@ def capture_readme(output_dir: str | Path) -> list[Path]:
         window.close()
         scheduler.timer.stop()
         menu.close()
+        app_module.read_state = original_read_state
         for key, value in previous_env.items():
             if value is None:
                 os.environ.pop(key, None)

@@ -59,7 +59,7 @@ class CheckWorker(QObject):
                         kind,
                         self.config.location,
                         socket.gethostname(),
-                        "0.0.0",
+                        installed_version() or "0.0.0",
                         action.get("changes"),
                         current,
                     )

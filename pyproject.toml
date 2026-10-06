@@ -32,7 +32,7 @@ files = ["src/thunderwatch", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 addopts = "--strict-markers"
 
 [tool.ruff.lint.per-file-ignores]

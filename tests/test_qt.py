@@ -28,6 +28,11 @@ def test_incomplete_configuration_routes_to_setup():
     assert should_setup(Store())
 
 
+def test_qsettings_storage_uses_test_temp_directory(isolated_qsettings):
+    settings = QSettings("ThunderWatchTests", "PathIsolation")
+    assert str(settings.fileName()).startswith(str(isolated_qsettings))
+
+
 def test_status_window_renders_synthetic_history(app, tmp_path, monkeypatch):
     from thunderwatch import app as app_module
 
@@ -147,6 +152,26 @@ def test_rerun_wizard_requires_password_when_smtp_identity_changes(app, monkeypa
     monkeypatch.setattr(wizard_module.QMessageBox, "warning", lambda *args: warnings.append(args))
     wizard.accept()
     assert settings.value("smtp/username") == "old@example.com"
+    assert warnings
+    wizard.close()
+
+
+def test_offline_setup_rejects_invalid_recipient(app, monkeypatch):
+    from thunderwatch import wizard as wizard_module
+
+    settings = QSettings("ThunderWatchTests", "WizardInvalidOfflineRecipient")
+    settings.clear()
+    wizard = SetupWizard(settings)
+    wizard.host.setText("smtp.example.com")
+    wizard.username.setText("alerts@example.com")
+    wizard.sender_edit.setText("alerts@example.com")
+    wizard.recipient.setText("not-an-email")
+    wizard.password.setText("synthetic-password")
+    wizard.save_offline.setChecked(True)
+    warnings = []
+    monkeypatch.setattr(wizard_module.QMessageBox, "warning", lambda *args: warnings.append(args))
+    wizard.accept()
+    assert not settings.value("setup/complete", False, type=bool)
     assert warnings
     wizard.close()
 

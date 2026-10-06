@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import os
+import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -32,11 +34,15 @@ class QtBackgroundPortal:
             raise RuntimeError(reply.errorMessage())
 
 
-def desktop_file(executable: str, appimage: str | None = None) -> str:
-    command = (
-        f"{_desktop_argument(appimage)} --autostart"
-        if appimage
-        else (f"{_desktop_argument(executable)} --autostart")
+def desktop_file(
+    executable: str,
+    appimage: str | None = None,
+    arguments: Sequence[str] = ("--autostart",),
+) -> str:
+    target = appimage or executable
+    args = ("--autostart",) if appimage else arguments
+    command = " ".join(
+        [_desktop_argument(target, force_quotes=True), *(_desktop_argument(arg) for arg in args)]
     )
     return (
         "[Desktop Entry]\nType=Application\nName=ThunderWatch\n"
@@ -44,18 +50,29 @@ def desktop_file(executable: str, appimage: str | None = None) -> str:
     )
 
 
-def _desktop_argument(value: str) -> str:
+def _desktop_argument(value: str, force_quotes: bool = False) -> str:
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     escaped = escaped.replace("$", "\\$").replace("`", "\\`").replace("%", "%%")
-    return f'"{escaped}"'
+    if force_quotes or any(character.isspace() or character in '"\\$`' for character in value):
+        return f'"{escaped}"'
+    return escaped
 
 
 def set_autostart(
     enabled: bool,
     executable: str | None = None,
     portal_client: BackgroundPortal | None = None,
+    arguments: Sequence[str] | None = None,
 ) -> None:
-    executable = executable or sys.executable
+    if executable is None:
+        executable = sys.executable
+        arguments = arguments or (
+            ("--autostart",)
+            if getattr(sys, "frozen", False)
+            else ("-m", "thunderwatch", "--autostart")
+        )
+    else:
+        arguments = arguments or ("--autostart",)
     if sys.platform == "win32":
         import winreg  # noqa: PLC0415
 
@@ -68,7 +85,11 @@ def set_autostart(
         try:
             if enabled:
                 winreg.SetValueEx(
-                    key, "ThunderWatch", 0, winreg.REG_SZ, f'"{executable}" --autostart'
+                    key,
+                    "ThunderWatch",
+                    0,
+                    winreg.REG_SZ,
+                    f'"{executable}" {subprocess.list2cmdline(list(arguments))}',
                 )
             else:
                 with contextlib.suppress(FileNotFoundError):
@@ -89,7 +110,9 @@ def set_autostart(
     target = base / "thunderwatch.desktop"
     if enabled:
         base.mkdir(parents=True, exist_ok=True)
-        target.write_text(desktop_file(executable, os.environ.get("APPIMAGE")), encoding="utf-8")
+        target.write_text(
+            desktop_file(executable, os.environ.get("APPIMAGE"), arguments), encoding="utf-8"
+        )
         target.chmod(0o644)
     else:
         target.unlink(missing_ok=True)

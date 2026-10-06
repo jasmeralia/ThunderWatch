@@ -278,7 +278,7 @@ class ThunderWatchApp:
         config = Config.from_store(self.settings)
         self.scheduler = Scheduler(config)
         try:
-            set_autostart(config.autostart, sys.executable)
+            set_autostart(config.autostart)
         except Exception as exc:
             self._autostart_error = str(exc)
         icon = resource_path("icons/thunderwatch.png")

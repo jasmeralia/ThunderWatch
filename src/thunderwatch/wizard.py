@@ -221,6 +221,23 @@ class SetupWizard(QWizard):
                 "Enter the SMTP host, username, From address, and one recipient.",
             )
             return
+        validation = Config(
+            setup_complete=True,
+            smtp_host=self.host.text().strip(),
+            smtp_port=self.port.value(),
+            smtp_security=self.security.currentText(),
+            smtp_username=self.username.text().strip(),
+            smtp_from=self.sender_edit.text().strip(),
+            smtp_recipient=self.recipient.text().strip(),
+            interval_minutes=self.interval.value(),
+        )
+        if not validation.complete:
+            QMessageBox.warning(
+                self,
+                "Invalid settings",
+                "Check the SMTP fields, email addresses, security, and interval.",
+            )
+            return
         if not self.password.text() and not self.settings.value("setup/complete", False):
             QMessageBox.warning(self, "Password required", "Enter the SMTP password.")
             return
