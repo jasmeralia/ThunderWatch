@@ -115,6 +115,11 @@ class UpdateDialog(QDialog):
             return
         super().closeEvent(event)
 
+    def reject(self) -> None:
+        if self.worker and self.worker.isRunning():
+            return
+        super().reject()
+
     def download(self) -> None:
         folder = app_data() / "updates"
         folder.mkdir(parents=True, exist_ok=True)

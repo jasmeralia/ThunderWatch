@@ -171,7 +171,15 @@ class StatusWindow(QMainWindow):
             if family == "ipv6" and not self.scheduler.config.ipv6:
                 continue
             current = observed.get(family)
-            if current:
+            family_status = last_check.get("families", {}).get(family)
+            if family_status is None:
+                family_status = (
+                    "success"
+                    if last_check.get("result") == "success"
+                    or last_check.get("providers", {}).get(family)
+                    else "failure"
+                )
+            if current and family_status == "success":
                 detail = f"{family.upper()}: {current.get('value', 'not available')}"
                 lines.append(f"{detail} · {current.get('time', '')}")
             elif family == "ipv6":

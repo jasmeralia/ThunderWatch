@@ -68,6 +68,25 @@ def test_status_window_renders_synthetic_history(app, tmp_path, monkeypatch):
     scheduler.timer.stop()
 
 
+def test_status_window_marks_ipv6_unavailable_after_failed_latest_lookup(app):
+    scheduler = Scheduler(Config())
+    window = StatusWindow(scheduler)
+    window.update_state(
+        {
+            "last_observed": {"ipv6": {"value": "2001:db8:1::/64", "time": "last-good-check"}},
+            "last_check": {
+                "result": "partial",
+                "families": {"ipv4": "success", "ipv6": "failure"},
+            },
+        },
+        [],
+    )
+    assert "IPv6: not available · last seen last-good-check" in window.summary.text()
+    assert "IPv6: 2001:db8:1::/64" not in window.summary.text()
+    scheduler.timer.stop()
+    window.close()
+
+
 def test_wizard_provider_preset_only_sets_server_fields(app, monkeypatch):
     settings = QSettings("ThunderWatchTests", "WizardPreset")
     wizard = SetupWizard(settings)
@@ -413,6 +432,56 @@ def test_settings_dialog_keeps_saved_false_string_preferences_disabled(app):
     dialog.close()
 
 
+def test_settings_dialog_reject_is_blocked_while_test_thread_runs(app):
+    from thunderwatch.settings_dialog import SettingsDialog
+
+    class RunningThread:
+        running = True
+
+        def isRunning(self):
+            return self.running
+
+    settings = QSettings("ThunderWatchTests", "SettingsRejectWhileTesting")
+    settings.clear()
+    dialog = SettingsDialog(settings)
+    thread = RunningThread()
+    dialog._test_thread = thread
+    dialog.show()
+    app.processEvents()
+    dialog.reject()
+    assert dialog.isVisible()
+    thread.running = False
+    dialog.close()
+
+
+def test_update_dialog_reject_is_blocked_while_download_runs(app):
+    from thunderwatch.update_dialog import UpdateDialog
+    from thunderwatch.updater import ReleaseAsset, UpdateOffer
+
+    class RunningWorker:
+        running = True
+
+        def isRunning(self):
+            return self.running
+
+    offer = UpdateOffer(
+        "0.2.0",
+        False,
+        "notes",
+        "https://example.invalid/release",
+        ReleaseAsset("update.exe", "https://example.invalid/file", 10, "a" * 64),
+    )
+    dialog = UpdateDialog(offer)
+    worker = RunningWorker()
+    dialog.worker = worker
+    dialog.show()
+    app.processEvents()
+    dialog.reject()
+    assert dialog.isVisible()
+    worker.running = False
+    dialog.close()
+
+
 def test_scheduler_retains_worker_until_thread_finishes(app, monkeypatch):
     import gc
 
@@ -483,6 +552,13 @@ def test_settings_dialog_save_reconfigures_scheduler_interval(app, monkeypatch):
     scheduler.reconfigure(Config(interval_minutes=20))
     assert scheduler.config.interval_minutes == 20
     assert scheduler.timer.interval() == 20 * 60_000
+    scheduler.timer.stop()
+
+
+def test_scheduler_owns_and_starts_initial_delay_timer(app):
+    scheduler = Scheduler(Config())
+    assert scheduler.timer.isActive()
+    assert scheduler.timer.interval() == 15_000
     scheduler.timer.stop()
 
 

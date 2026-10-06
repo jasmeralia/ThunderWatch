@@ -16,5 +16,7 @@ returned by the providers.
 ![Test and finish](images/wizard-steps/05-test-and-finish.png)
 
 If an OS keyring is unavailable, ThunderWatch offers a password file only after the
-owner-only storage checkbox is selected. A test email must succeed before setup can
-finish, unless **Save without a successful test** is explicitly selected.
+owner-only storage checkbox is selected. The fallback is bound to the SMTP username
+and host; files from older versions without matching account metadata are ignored and
+the password must be entered again. A test email must succeed before setup can finish,
+unless **Save without a successful test** is explicitly selected.

@@ -24,7 +24,7 @@ class Scheduler(QObject):
         self.timer.timeout.connect(self.run)
         self._worker: CheckWorker | None = None
         self._worker_thread: QThread | None = None
-        QTimer.singleShot(15_000, self.run)
+        self.timer.start(15_000)
 
     def reconfigure(self, config: Config) -> None:
         self.config = config
@@ -63,14 +63,15 @@ class Scheduler(QObject):
         self.running = False
         run_requested = self._run_requested
         self._run_requested = False
-        if "ipv4_failure_streak" in state:
-            failed = state["ipv4_failure_streak"] > 0
-        else:
-            failed = state.get("last_check", {}).get("result") != "success"
+        last_result = state.get("last_check", {}).get("result")
+        failed = state.get("ipv4_failure_streak", 0) > 0 or last_result not in {
+            "success",
+            "partial",
+        }
         self.failures = self.failures + 1 if failed else 0
-        self.state_changed.emit(state, actions)
         delay = min(2 ** max(self.failures - 1, 0), 8) if failed else self.config.interval_minutes
         if run_requested:
             self.timer.start(0)
         else:
             self.schedule(min(delay, self.config.interval_minutes))
+        self.state_changed.emit(state, actions)

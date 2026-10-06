@@ -83,6 +83,9 @@ def apply_lookup(
     new["last_check"] = {
         "time": _stamp(now),
         "result": "failure" if failures and not successes else "partial" if failures else "success",
+        "families": {
+            family: "success" if result.ok else "failure" for family, result in results.items()
+        },
         "providers": {key: list(value.providers) for key, value in results.items()},
     }
     if failures:
@@ -152,7 +155,8 @@ def apply_delivery(
         )
         actions = [{"type": "delivered"}]
     else:
-        if pending.get("changes") == changes:
+        current_changes = pending.get("changes", {})
+        if any(current_changes.get(family) == change for family, change in changes.items()):
             pending["last_error"] = error
             pending["attempted_at"] = _stamp(now)
         new.setdefault("history", []).append(

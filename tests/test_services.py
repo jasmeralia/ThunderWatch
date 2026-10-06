@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from PyQt6.QtWidgets import QApplication
 
 from thunderwatch import secrets
 from thunderwatch.autostart import set_autostart
@@ -17,6 +18,11 @@ from thunderwatch.scheduler import Scheduler
 from thunderwatch.state import empty_state
 from thunderwatch.worker import CheckWorker
 from thunderwatch.worker import TestEmailWorker as EmailWorker
+
+
+@pytest.fixture
+def app():
+    return QApplication.instance() or QApplication([])
 
 
 def test_fetch_sets_timeout_user_agent_and_caps_response(monkeypatch):
@@ -324,9 +330,29 @@ def test_healthy_keyring_missing_entry_can_use_opted_in_file_fallback(monkeypatc
             return None
 
     fallback = tmp_path / "password"
-    fallback.write_text("file-secret", encoding="utf-8")
+    monkeypatch.setattr(secrets, "keyring_available", lambda: False)
+    secrets.store_password("user", "host", "file-secret", fallback, allow_file=True)
+    monkeypatch.setattr(secrets, "keyring_available", lambda: True)
     monkeypatch.setattr(secrets, "_keyring", EmptyKeyring)
     assert secrets.read_password("user", "host", fallback) == "file-secret"
+
+
+def test_password_file_fallback_is_bound_to_its_smtp_identity(monkeypatch, tmp_path):
+    class EmptyKeyring:
+        def get_keyring(self):
+            return object()
+
+        def get_password(self, *_args):
+            return None
+
+    fallback = tmp_path / "password"
+    monkeypatch.setattr(secrets, "_keyring", EmptyKeyring)
+    monkeypatch.setattr(secrets, "keyring_available", lambda: False)
+    secrets.store_password("first-user", "smtp.example", "file-secret", fallback, allow_file=True)
+    monkeypatch.setattr(secrets, "keyring_available", lambda: True)
+    assert secrets.read_password("first-user", "smtp.example", fallback) == "file-secret"
+    assert secrets.read_password("other-user", "smtp.example", fallback) is None
+    assert secrets.read_password("first-user", "other.example", fallback) is None
 
 
 def test_worker_runs_fake_lookup_and_delivery_and_persists_after_acceptance(monkeypatch):
@@ -416,6 +442,28 @@ def test_scheduler_ipv6_only_failure_keeps_regular_interval():
     )
     assert scheduler.failures == 0
     assert scheduler.timer.interval() == 10 * 60_000
+    scheduler.timer.stop()
+
+
+def test_scheduler_retries_persistence_failure_even_when_ipv4_lookup_succeeded():
+    scheduler = Scheduler(Config(interval_minutes=10))
+    scheduler.done(
+        {"last_check": {"result": "failure"}, "ipv4_failure_streak": 0},
+        [{"type": "retry"}],
+    )
+    assert scheduler.failures == 1
+    assert scheduler.timer.interval() == 60_000
+    scheduler.timer.stop()
+
+
+def test_scheduler_starts_next_timer_before_emitting_state(app):
+    scheduler = Scheduler(Config(interval_minutes=10))
+    timer_active_during_notification = []
+    scheduler.state_changed.connect(
+        lambda _state, _actions: timer_active_during_notification.append(scheduler.timer.isActive())
+    )
+    scheduler.done({"last_check": {"result": "success"}}, [])
+    assert timer_active_during_notification == [True]
     scheduler.timer.stop()
 
 

@@ -152,6 +152,11 @@ class SettingsDialog(QDialog):
             return
         super().closeEvent(event)
 
+    def reject(self) -> None:
+        if self._test_thread and self._test_thread.isRunning():
+            return
+        super().reject()
+
     def _test_finished(self, success: bool, message: str) -> None:
         self.test_button.setEnabled(True)
         icon = QMessageBox.Icon.Information if success else QMessageBox.Icon.Warning

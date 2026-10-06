@@ -255,8 +255,9 @@ the recipient does not reset `last_reported`.
   emails, or update requests.
 - **State:** `<AppDataLocation>/state.json`, written atomically (temporary file plus
   `os.replace`) and versioned. Fields: `last_reported` per family plus a timestamp,
-  `last_observed`, `last_check` (time, result, providers), `pending` (the change
-  awaiting delivery, with its last error), and `history` (capped at 50). An invalid
+  `last_observed`, `last_check` (time, overall result, per-family results, providers),
+  `pending` (the change awaiting delivery, with its last error), and `history` (capped
+  at 50). An invalid
   or unreadable state file degrades to empty state with a logged warning, as in
   `ip-monitor.py`'s `read_state`. The next confirmed address then sends a "monitoring
   started" email.
@@ -577,5 +578,7 @@ providers or SMTP servers.
 - The default check interval is **10 minutes** (ip-monitor uses hourly). It is
   configurable from 5 to 720 minutes.
 - If no OS keyring is usable, an opt-in owner-only password file is the fallback. The
-  alternative is to refuse to save, which would block Linux desktops without a Secret
-  Service.
+  file has a sidecar recording its SMTP username and host, so a saved password is never
+  tried against a different SMTP account. Legacy password files without matching
+  metadata are ignored. The alternative is to refuse to save, which would block Linux
+  desktops without a Secret Service.

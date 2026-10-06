@@ -390,6 +390,26 @@ def test_delivery_clears_sent_family_but_preserves_other_pending_changes():
     assert updated["last_reported"]["ipv6"]["value"] == "2001:db8:1::/64"
 
 
+def test_failed_delivery_records_error_when_sent_changes_are_only_a_subset():
+    ipv6 = {"old": "2001:db8::/64", "new": "2001:db8:1::/64"}
+    state = empty_state()
+    state["pending"] = {
+        "changes": {
+            "ipv4": {"old": "203.0.113.4", "new": "198.51.100.7"},
+            "ipv6": ipv6,
+        }
+    }
+    updated, _ = apply_delivery(
+        state,
+        False,
+        datetime.now(UTC),
+        error="synthetic SMTP failure",
+        sent_changes={"ipv6": ipv6},
+    )
+    assert updated["pending"]["last_error"] == "synthetic SMTP failure"
+    assert "attempted_at" in updated["pending"]
+
+
 def test_config_parses_qsettings_false_strings_as_false():
     from thunderwatch.config import Config
 
