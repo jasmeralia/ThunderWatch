@@ -17,7 +17,8 @@ script's nginx-proxy-manager ACL integration.
 In scope for the first release:
 
 - Windows 10/11 x64 (primary target) and Linux amd64/arm64 desktops.
-- Public IPv4 monitoring, plus optional IPv6 `/64` prefix monitoring.
+- Public IPv4 and IPv6 `/64` prefix monitoring. Both are on by default, because the
+  fail2ban allowlist covers both address families. IPv6 can be turned off.
 - SMTP email notification with TLS, a first-run setup wizard, a settings dialog, a
   status window, tray notifications, start at sign-in, and GitHub-Releases updates
   with an opt-in beta channel.
@@ -65,7 +66,11 @@ triggers an email and never overwrites the stored address.
   address, so the recipient always knows the starting value.
 - **IPv6 availability.** If IPv6 monitoring is enabled but the machine has no IPv6
   connectivity, that is a failure, not a change. Losing IPv6 never sends an email.
-  Gaining it again only emails if the prefix differs from `last_reported`.
+  Gaining it again only emails if the prefix differs from `last_reported`. Because
+  IPv6 is on by default and many connections have none, IPv6 failures alone never
+  raise the amber tray badge or a balloon. The status window shows "IPv6: not
+  available" with the time it was last seen instead. The badge reflects IPv4 lookups
+  only.
 
 ### Check scheduling
 
@@ -143,9 +148,11 @@ Use a `QWizard` with GaleFling's step rail (`src/gui/setup_wizard.py`:
    and security only.
 3. **Recipient and location:** recipients and location label.
 4. **Monitoring and startup:** check interval, **Also monitor the IPv6 prefix** (default
-   off), **Start ThunderWatch when I sign in** (default on), and **Include beta
+   on), **Start ThunderWatch when I sign in** (default on), and **Include beta
    updates** (default off).
-5. **Test and finish:** look up and show the current IP, then **Send Test Email**.
+5. **Test and finish:** look up and show the current IPv4 address and IPv6 prefix. Show
+   "IPv6 not available on this network" when there is none, as information, not an
+   error. Then **Send Test Email**.
    Finish is enabled after a successful test. A "Save without a successful test"
    checkbox allows finishing anyway (for example, setting it up offline). A
    successful test email that included the current IP sets `last_reported`, so no
@@ -159,8 +166,8 @@ with current values. Canceling a rerun keeps the existing configuration.
 
 - The icon is the suite icon with GaleFling-style corner badges (port the badge
   compositor from `src/gui/tray_icon.py`). No badge means healthy. A **warning
-  (amber)** dot means lookups have failed three or more times in a row (offline), and
-  clears on the next success. A **danger (red)** dot means an email is pending or
+  (amber)** dot means IPv4 lookups have failed three or more times in a row (offline),
+  and clears on the next success. A **danger (red)** dot means an email is pending or
   failing, or the password is unavailable.
 - Tooltip: `ThunderWatch - <location>`, the current IPv4 (and IPv6 prefix if enabled),
   and the last check time and result.
@@ -413,7 +420,7 @@ providers or SMTP servers.
     (baseline holds and the change stays pending).
   - A flap back to the old value while pending (nothing is sent, pending clears).
   - First-baseline "started" email.
-  - IPv6 loss and regain.
+  - IPv6 loss and regain, and IPv6-only failures never setting the warning state.
   - Combined v4 and v6 changes in one email.
   - Backoff progression and reset.
 - **`notifier`:** subject and body content per email type, and security-mode
@@ -473,8 +480,6 @@ providers or SMTP servers.
 
 ## Decisions to confirm during implementation
 
-- IPv6 prefix monitoring defaults to **off**. Turn it on by default if the fail2ban
-  allowlist on gelfling needs IPv6.
 - The default check interval is **10 minutes** (ip-monitor uses hourly). It is
   configurable from 5 to 720 minutes.
 - If no OS keyring is usable, an opt-in owner-only password file is the fallback. The
