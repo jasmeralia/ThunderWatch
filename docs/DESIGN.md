@@ -61,6 +61,12 @@ triggers an email and never overwrites the stored address.
   before an email gets through, nothing is sent, because the recipient's allowlist is
   still correct. The same effect as ip-monitor's write-state-only-on-success rule, but
   applied to email delivery.
+- **Delivery is at-least-once, not exactly-once.** SMTP and the local state file cannot
+  be updated in one transaction. If the SMTP server accepts the message and
+  ThunderWatch exits before the new baseline is saved, the next start sends the same
+  change again. To keep that window small, save the delivery result immediately after
+  the SMTP server responds, before updating the UI. A duplicate after a crash is
+  acceptable; a missed notification is not.
 - **No baseline yet.** On the first confirmed address after setup (normally captured by
   the wizard's test email), send a "monitoring started" email with the current
   address, so the recipient always knows the starting value.
@@ -88,8 +94,14 @@ triggers an email and never overwrites the stored address.
 ## Notification email
 
 - SMTP settings: host, port, security mode, username, password (or app password),
-  From address (defaults to the username), and one or more recipients (comma
-  separated, each validated).
+  From address (defaults to the username), and **one** validated recipient address.
+  A single recipient keeps delivery state well defined. With several recipients, an
+  SMTP server can accept some and reject others, and the single `last_reported` and
+  `pending` state could not record that. Any refused recipient
+  (`SMTPRecipientsRefused`, or a non-empty refused dict from `send_message`) counts
+  as a failed send. To notify more than one person, point the recipient at a mailing
+  list or alias. Supporting several recipients would need per-recipient
+  `last_reported`/`pending` state and is out of scope for the first release.
 - Security modes: **Auto** (implicit TLS on 465, STARTTLS otherwise), **SSL/TLS**, and
   **STARTTLS**. Plaintext SMTP authentication is not offered. A failed STARTTLS
   upgrade fails the send. Generalize GaleFling's `src/core/smtp_utils.py` (which
@@ -120,7 +132,7 @@ triggers an email and never overwrites the stored address.
 2. **Single instance.** Use a `QLocalServer` named per user. A second launch sends
    "show" to the running instance, which opens its status window, and then exits 0.
 3. Check whether a configuration exists: `setup/complete` is true and the non-secret
-   SMTP fields (host, port, username, From address, at least one recipient) are
+   SMTP fields (host, port, username, From address, recipient) are
    present and valid.
    - **No configuration:** show the setup wizard, whether launched by the user or at
      sign-in.
@@ -146,7 +158,7 @@ Use a `QWizard` with GaleFling's step rail (`src/gui/setup_wizard.py`:
 2. **Email server:** host, port, security mode, username, password, From address.
    Common-provider presets (Gmail, Outlook.com, Fastmail, Custom) fill in host, port,
    and security only.
-3. **Recipient and location:** recipients and location label.
+3. **Recipient and location:** recipient address and location label.
 4. **Monitoring and startup:** check interval, **Also monitor the IPv6 prefix** (default
    on), **Start ThunderWatch when I sign in** (default on), and **Include beta
    updates** (default off).
@@ -209,7 +221,7 @@ the recipient does not reset `last_reported`.
 
 - **Settings:** `QSettings("WindsOfStorm", "ThunderWatch")` (the same organization as
   TempestTrace) for every non-secret value. Keys: `setup/complete`, `smtp/host`,
-  `smtp/port`, `smtp/security`, `smtp/username`, `smtp/from`, `smtp/recipients`,
+  `smtp/port`, `smtp/security`, `smtp/username`, `smtp/from`, `smtp/recipient`,
   `monitor/location`, `monitor/interval_minutes`, `monitor/ipv6`, `startup/autostart`,
   `updates/automatic`, `updates/include_beta`. Parse them into a frozen `Config`
   dataclass with validation, kept Qt-free behind a small settings-store protocol so it
@@ -284,7 +296,7 @@ behavior matches TempestTrace's "Updates and release channels" section:
   | Module | Responsibility |
   | --- | --- |
   | `ipcheck.py` | Provider list, fetch and validate, the two-provider confirmation. Takes an injectable `fetch(url) -> str` callable. |
-  | `monitor.py` | Pure decision function: `(state, lookup results, now) -> (new state, actions)`. Actions: send change email, send started email, notify tray, schedule retry. |
+  | `monitor.py` | Two pure transitions. `apply_lookup(state, lookup results, now) -> (new state, actions)` records the observation and any pending change. Its actions: send change email, send started email, notify tray, schedule retry. `apply_delivery(state, delivery result, now) -> (new state, actions)` consumes the SMTP outcome of a send action: success advances `last_reported` and clears `pending`; failure keeps `pending` and records the error. The worker persists state after every transition, and no baseline logic lives in the Qt layer. |
   | `notifier.py` | Email composition and the SMTP send, with an injectable SMTP factory. |
   | `state.py` | Atomic JSON persistence and the history cap. |
   | `config.py` | `Config` dataclass, validation, settings-store protocol. |
@@ -475,9 +487,14 @@ providers or SMTP servers.
   - IPv6 loss and regain, and IPv6-only failures never setting the warning state.
   - Combined v4 and v6 changes in one email.
   - Backoff progression and reset.
+  - `apply_delivery`: success advances `last_reported` and clears `pending`; failure
+    and a partially refused recipient keep `pending`. A delivery result for a stale
+    pending change (the address moved again while the email was sending) does not
+    overwrite the newer pending change.
 - **`notifier`:** subject and body content per email type, and security-mode
   selection (Auto/465 → `SMTP_SSL`, otherwise STARTTLS). A STARTTLS failure surfaces
-  as an error. The password never appears in the returned error text.
+  as an error, as does a refused recipient. The password never appears in the returned
+  error text.
 - **`state`:** atomic write, corrupt or unknown-version files degrade to empty, and the
   history cap.
 - **`config` and `secrets`:** validation, the completeness rule, the keyring
@@ -521,8 +538,10 @@ providers or SMTP servers.
   later launches and sign-ins go straight to the tray with no window.
 - Unplugging the network for any length of time sends no email and only shows the
   amber badge. Reconnecting with the same IP sends nothing.
-- A real IP change (simulated in tests and in the debug build) sends exactly one email
-  per change, confirmed by two providers, containing the old and new values.
+- A real IP change (simulated in tests and in the debug build) sends one email per
+  change, confirmed by two providers, containing the old and new values. The only
+  allowed duplicate is a resend after a crash between SMTP acceptance and saving
+  state, because delivery is at-least-once.
 - If SMTP is down during a change, the email goes out on a later check, and the
   baseline only advances after delivery.
 - With beta updates off, the updater never offers a prerelease. With them on, it
