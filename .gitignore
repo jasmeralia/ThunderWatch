@@ -15,5 +15,6 @@ build/tmp/
 .env
 *.ini
 *.json.bak
+docs/REVIEW.md
 
 *.egg-info/
