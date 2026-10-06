@@ -261,8 +261,17 @@ the recipient does not reset `last_reported`.
   or unreadable state file degrades to empty state with a logged warning, as in
   `ip-monitor.py`'s `read_state`. The next confirmed address then sends a "monitoring
   started" email.
-- **Logs:** a rotating log in `<AppDataLocation>/logs/` (1 MB × 5). IP addresses may be
-  logged; secrets may not.
+- **Logs and crash diagnostics:** the rotating `thunderwatch.log` is stored in
+  `<AppDataLocation>/logs/` (1 MB × 5), with a private per-user temporary-directory
+  fallback if the application data directory cannot be written. If neither location
+  accepts a file, normal logs go to stderr. The Status window's **Open Log Folder**
+  button follows the active file-log location. Uncaught main-thread, Qt event,
+  worker-thread, and unraisable Python exceptions are recorded with tracebacks; Qt
+  warnings and fatal messages include their source context. `faulthandler` writes native/fatal Python
+  crash details for all threads to `fatal_errors.log`, and a fatal report is archived
+  at next startup. Forced termination, power loss, and OS kills that do not produce a
+  Python/Qt fatal report cannot be captured. IP addresses may be logged; secrets may
+  not.
 
 ## Start at sign-in
 
@@ -406,7 +415,8 @@ widgets, rendered offscreen with synthetic data, and embed them in the README.
   `docs/SETUP_WIZARD.md`, a step-by-step walkthrough linked from the README.
 - **`make screenshots`** (depends on `deps`) runs both generators with
   `QT_QPA_PLATFORM=offscreen`. `make lint` runs ruff over `tools/screenshots/` as
-  well.
+  well. The Makefile runs lint, tests, screenshots, and the app with the project
+  `.venv`; `make deps` creates it and installs the development dependencies.
 - **README "Screenshots" section:** says the images come from the real interface with
   synthetic data and no real addresses or credentials. It embeds the status window,
   tray menu and states, settings, and wizard images with a one-line caption each,

@@ -1,25 +1,40 @@
+VENV := .venv
+
+ifeq ($(OS),Windows_NT)
+PYTHON ?= python
+PY := $(VENV)/Scripts/python.exe
+else
 PYTHON ?= python3
+PY := $(VENV)/bin/python
+endif
 
-.PHONY: deps lint lintfix test run screenshots
+PIP := $(PY) -m pip
 
-deps:
-	$(PYTHON) -m pip install -r requirements-dev.txt
+.PHONY: venv deps lint lintfix test run screenshots
+
+venv:
+	@command -v $(PYTHON) >/dev/null 2>&1 || \
+		{ echo "ERROR: $(PYTHON) not found. Install Python 3."; exit 1; }
+	$(PYTHON) -m venv $(VENV)
+
+deps: venv
+	$(PIP) install -r requirements-dev.txt
 
 lint:
-	$(PYTHON) -m ruff check src/ scripts/ tests/ tools/screenshots/
-	$(PYTHON) -m ruff format --check src/ scripts/ tests/ tools/screenshots/
-	$(PYTHON) -m mypy src/thunderwatch/ scripts/
+	$(PY) -m ruff check src/ scripts/ tests/ tools/screenshots/
+	$(PY) -m ruff format --check src/ scripts/ tests/ tools/screenshots/
+	$(PY) -m mypy src/thunderwatch/ scripts/
 
 lintfix:
-	$(PYTHON) -m ruff check --fix src/ scripts/ tests/ tools/screenshots/
-	$(PYTHON) -m ruff format src/ scripts/ tests/ tools/screenshots/
+	$(PY) -m ruff check --fix src/ scripts/ tests/ tools/screenshots/
+	$(PY) -m ruff format src/ scripts/ tests/ tools/screenshots/
 
 test:
-	QT_QPA_PLATFORM=offscreen $(PYTHON) -m pytest tests/ --cov=src/thunderwatch --cov=scripts --cov-report=term-missing --cov-report=xml:coverage.xml --junitxml=junit.xml
+	QT_QPA_PLATFORM=offscreen $(PY) -m pytest tests/ --cov=src/thunderwatch --cov=scripts --cov-report=term-missing --cov-report=xml:coverage.xml --junitxml=junit.xml
 
 run:
-	$(PYTHON) -m thunderwatch
+	$(PY) -m thunderwatch
 
-screenshots:
-	QT_QPA_PLATFORM=offscreen $(PYTHON) tools/screenshots/generate_readme_screenshots.py
-	QT_QPA_PLATFORM=offscreen $(PYTHON) tools/screenshots/generate_wizard_step_screenshots.py
+screenshots: deps
+	QT_QPA_PLATFORM=offscreen $(PY) tools/screenshots/generate_readme_screenshots.py
+	QT_QPA_PLATFORM=offscreen $(PY) tools/screenshots/generate_wizard_step_screenshots.py

@@ -68,6 +68,28 @@ def test_status_window_renders_synthetic_history(app, tmp_path, monkeypatch):
     scheduler.timer.stop()
 
 
+def test_status_window_opens_the_active_log_directory(app, tmp_path, monkeypatch):
+    from thunderwatch import app as app_module
+
+    opened = []
+
+    def record_opened(url):
+        opened.append(url)
+
+    monkeypatch.setattr(app_module, "active_log_directory", lambda: tmp_path)
+    monkeypatch.setattr(app_module.QDesktopServices, "openUrl", record_opened)
+    scheduler = Scheduler(Config())
+    window = StatusWindow(scheduler)
+    button = next(
+        button for button in window.findChildren(QPushButton) if button.text() == "Open Log Folder"
+    )
+    button.click()
+    assert len(opened) == 1
+    assert opened[0].toLocalFile() == str(tmp_path)
+    scheduler.timer.stop()
+    window.close()
+
+
 def test_status_window_marks_ipv6_unavailable_after_failed_latest_lookup(app):
     scheduler = Scheduler(Config())
     window = StatusWindow(scheduler)
@@ -321,6 +343,36 @@ def test_wizard_retest_clears_pending_change_already_reported_by_test_email(app,
     wizard.close()
 
 
+def test_rerun_wizard_pauses_scheduler_until_state_update_finishes(app, monkeypatch):
+    from PyQt6.QtWidgets import QDialog
+
+    from thunderwatch import settings_dialog as settings_module
+    from thunderwatch.settings_dialog import SettingsDialog
+
+    events = []
+
+    class SchedulerStub:
+        def pause_and_wait(self):
+            events.append("pause")
+
+        def resume(self):
+            events.append("resume")
+
+    class WizardStub:
+        def __init__(self, _settings):
+            pass
+
+        def exec(self):
+            events.append("wizard")
+            return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(settings_module, "SetupWizard", WizardStub)
+    dialog = SettingsDialog(QSettings("ThunderWatchTests", "WizardSerialState"), SchedulerStub())
+    dialog._run_wizard()
+    assert events == ["pause", "wizard", "resume"]
+    dialog.close()
+
+
 @pytest.mark.parametrize("dialog_kind", ["wizard", "settings", "update"])
 def test_worker_dialog_refuses_close_while_thread_is_running(app, dialog_kind):
     from thunderwatch.settings_dialog import SettingsDialog
@@ -515,6 +567,35 @@ def test_scheduler_retains_worker_until_thread_finishes(app, monkeypatch):
             thread.quit()
             thread.wait(2000)
         scheduler.timer.stop()
+
+
+def test_scheduler_pause_waits_for_in_flight_worker(app, monkeypatch):
+    from PyQt6.QtCore import QObject, QThread, pyqtSignal
+
+    from thunderwatch import scheduler as scheduler_module
+
+    class Worker(QObject):
+        finished = pyqtSignal(dict, list)
+
+        def __init__(self, _config):
+            super().__init__()
+
+        def check(self):
+            QThread.msleep(30)
+            self.finished.emit({"last_check": {"result": "success"}}, [])
+
+    monkeypatch.setattr(scheduler_module, "CheckWorker", Worker)
+    scheduler = Scheduler(Config())
+    scheduler.run()
+    thread = scheduler._worker_thread
+    assert thread is not None
+    scheduler.pause_and_wait()
+    assert not thread.isRunning()
+    assert not scheduler.running
+    assert not scheduler.timer.isActive()
+    scheduler.resume()
+    assert scheduler.timer.isActive()
+    scheduler.timer.stop()
 
 
 def test_local_server_claim_removes_stale_socket_but_never_continues_unowned(monkeypatch):

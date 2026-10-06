@@ -1,6 +1,8 @@
 # ruff: noqa: PLC0415
 from datetime import UTC, datetime
 
+import pytest
+
 from thunderwatch.ipcheck import lookup
 from thunderwatch.monitor import apply_delivery, apply_lookup
 from thunderwatch.notifier import send_email
@@ -47,11 +49,11 @@ def test_successful_delivery_advances_baseline():
 def test_state_round_trip_and_history_cap(tmp_path):
     path = tmp_path / "state.json"
     state = empty_state()
-    state["history"] = [{"i": i} for i in range(60)]
+    state["history"] = [{"type": "event", "time": "now", "i": i} for i in range(60)]
     write_state(path, state)
     restored = read_state(path)
     assert len(restored["history"]) == 50
-    assert restored["history"][0] == {"i": 10}
+    assert restored["history"][0] == {"type": "event", "time": "now", "i": 10}
 
 
 def test_smtp_refused_recipient_is_failure_and_password_is_redacted():
@@ -632,3 +634,25 @@ def test_corrupt_and_unknown_state_versions_degrade_to_empty(tmp_path):
     assert read_state(path)["last_reported"] == {}
     path.write_text(json.dumps({"version": 999, "history": []}), encoding="utf-8")
     assert read_state(path)["version"] == 1
+
+
+@pytest.mark.parametrize(
+    "invalid_state",
+    [
+        {"history": [1]},
+        {"last_reported": []},
+        {"last_observed": {"ipv4": []}},
+        {"last_check": {"families": []}},
+        {"last_check": {"result": []}},
+        {"pending": {"changes": {"ipv4": []}}},
+        {"pending": {"attempted_at": []}},
+        {"ipv4_failure_streak": []},
+        {"history": [{"type": "change_detected", "time": "now", "changes": []}]},
+    ],
+)
+def test_malformed_version_one_state_degrades_to_empty(tmp_path, invalid_state):
+    import json
+
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({**empty_state(), **invalid_state}), encoding="utf-8")
+    assert read_state(path) == empty_state()

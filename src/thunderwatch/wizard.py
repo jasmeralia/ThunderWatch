@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import socket
 
 from PyQt6.QtCore import QSettings, QThread
@@ -26,6 +27,8 @@ from .paths import password_path, state_path
 from .secrets import store_password
 from .state import read_state, write_state
 from .worker import TestEmailWorker
+
+logger = logging.getLogger(__name__)
 
 
 class SetupWizard(QWizard):
@@ -318,6 +321,7 @@ class SetupWizard(QWizard):
                     self.allow_file.isChecked(),
                 )
             except Exception as exc:
+                logger.exception("Could not save SMTP password from setup wizard")
                 QMessageBox.critical(self, "Password not saved", str(exc))
                 return
         for key, value in values.items():
@@ -325,6 +329,7 @@ class SetupWizard(QWizard):
         try:
             set_autostart(self.autostart.isChecked())
         except Exception as exc:
+            logger.exception("Could not configure automatic startup from setup wizard")
             QMessageBox.warning(self, "Startup registration", str(exc))
         if self.test_succeeded and self.test_addresses:
             state = read_state(state_path())

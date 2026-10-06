@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from PyQt6.QtCore import QSettings, QThread
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
@@ -23,15 +25,19 @@ from PyQt6.QtWidgets import (
 from .autostart import set_autostart
 from .config import Config, smtp_identity_changed
 from .paths import password_path
+from .scheduler import Scheduler
 from .secrets import store_password
 from .wizard import SetupWizard
 from .worker import TestEmailWorker
 
+logger = logging.getLogger(__name__)
+
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings: QSettings) -> None:  # noqa: PLR0915
+    def __init__(self, settings: QSettings, scheduler: Scheduler | None = None) -> None:  # noqa: PLR0915
         super().__init__()
         self.settings = settings
+        self.scheduler = scheduler
         config = Config.from_store(settings)
         self._test_thread: QThread | None = None
         self._test_worker: TestEmailWorker | None = None
@@ -163,9 +169,15 @@ class SettingsDialog(QDialog):
         QMessageBox(icon, "ThunderWatch test email", message, QMessageBox.StandardButton.Ok).exec()
 
     def _run_wizard(self) -> None:
-        wizard = SetupWizard(self.settings)
-        if wizard.exec() == QDialog.DialogCode.Accepted:
-            self.accept()
+        if self.scheduler:
+            self.scheduler.pause_and_wait()
+        try:
+            wizard = SetupWizard(self.settings)
+            if wizard.exec() == QDialog.DialogCode.Accepted:
+                self.accept()
+        finally:
+            if self.scheduler:
+                self.scheduler.resume()
 
     def _save(self) -> None:
         if self._test_thread and self._test_thread.isRunning():
@@ -211,6 +223,7 @@ class SettingsDialog(QDialog):
                     self.allow_file.isChecked(),
                 )
             except Exception as exc:
+                logger.exception("Could not save SMTP password from settings")
                 QMessageBox.critical(self, "Password not saved", str(exc))
                 return
         for key, value in {
@@ -232,5 +245,6 @@ class SettingsDialog(QDialog):
         try:
             set_autostart(config.autostart)
         except Exception as exc:
+            logger.exception("Could not configure automatic startup from settings")
             QMessageBox.warning(self, "Startup registration", str(exc))
         self.accept()

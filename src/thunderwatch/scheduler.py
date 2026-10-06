@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
+from PyQt6.QtCore import QEventLoop, QObject, QThread, QTimer, pyqtSignal
 
 from .config import Config
 from .worker import CheckWorker
@@ -18,6 +18,7 @@ class Scheduler(QObject):
         self.config = config
         self.failures = 0
         self.running = False
+        self._paused = False
         self._run_requested = False
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -35,6 +36,24 @@ class Scheduler(QObject):
     def schedule(self, minutes: int | None = None) -> None:
         delay = self.config.interval_minutes if minutes is None else minutes
         self.timer.start(delay * 60_000)
+
+    def pause_and_wait(self) -> None:
+        """Stop scheduled work and wait for any in-flight state update to finish."""
+        self._paused = True
+        self.timer.stop()
+        thread = self._worker_thread
+        if thread is None or not thread.isRunning():
+            return
+        loop = QEventLoop()
+        thread.finished.connect(loop.quit)
+        if thread.isRunning():
+            loop.exec()
+        thread.finished.disconnect(loop.quit)
+
+    def resume(self) -> None:
+        self._paused = False
+        if not self.running:
+            self.schedule()
 
     def run(self) -> None:
         if self.running:
@@ -70,7 +89,9 @@ class Scheduler(QObject):
         }
         self.failures = self.failures + 1 if failed else 0
         delay = min(2 ** max(self.failures - 1, 0), 8) if failed else self.config.interval_minutes
-        if run_requested:
+        if self._paused:
+            pass
+        elif run_requested:
             self.timer.start(0)
         else:
             self.schedule(min(delay, self.config.interval_minutes))

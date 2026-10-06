@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +15,19 @@ def test_flatpak_manifest_grants_only_documented_permissions():
         "- --talk-name=org.freedesktop.secrets",
     ]
     assert "filesystem" not in manifest
+
+
+def test_flatpak_ci_installs_the_user_remote_and_package():
+    workflow = (ROOT / ".github/workflows/linux-packages.yml").read_text()
+    assert "flatpak remote-add --user --if-not-exists flathub" in workflow
+    assert 'flatpak install --user --noninteractive --assumeyes "$package"' in workflow
+
+
+def test_make_tools_run_with_the_project_virtualenv():
+    output = subprocess.run(
+        ["make", "--dry-run", "lint"], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout
+    assert ".venv/" in output and " -m ruff check" in output
 
 
 def test_nsis_uninstaller_removes_windows_autostart_registration():

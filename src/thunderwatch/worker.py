@@ -116,6 +116,13 @@ class TestEmailWorker(QObject):
 
     @pyqtSlot()
     def run(self) -> None:
+        try:
+            self._run()
+        except Exception:
+            logger.exception("Test email worker failed unexpectedly")
+            self.finished.emit(False, "Test email failed unexpectedly; see the log for details.")
+
+    def _run(self) -> None:
         password = self.password_override or read_password(
             self.config.smtp_username, self.config.smtp_host, self.password_file
         )

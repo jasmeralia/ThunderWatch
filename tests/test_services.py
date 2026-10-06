@@ -432,6 +432,43 @@ def test_test_email_worker_reports_unavailable_password_without_sending(monkeypa
     assert results == [(False, "Email password unavailable")]
 
 
+def test_test_email_worker_logs_unexpected_failure_with_traceback(monkeypatch, caplog):
+    monkeypatch.setattr("thunderwatch.worker.read_password", lambda *args: "synthetic-secret")
+    monkeypatch.setattr(
+        "thunderwatch.worker.lookup",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("synthetic lookup error")),
+    )
+    worker = EmailWorker(Config(smtp_host="smtp.example.com", smtp_username="user"))
+    results = []
+    worker.finished.connect(lambda ok, message: results.append((ok, message)))
+    worker.run()
+    assert results == [(False, "Test email failed unexpectedly; see the log for details.")]
+    assert any(
+        record.exc_info and "synthetic lookup error" in str(record.exc_info[1])
+        for record in caplog.records
+    )
+    assert any(record.exc_info for record in caplog.records)
+
+
+def test_update_check_worker_logs_unexpected_failure_with_traceback(monkeypatch, caplog):
+    from thunderwatch import update_dialog
+
+    monkeypatch.setattr(
+        update_dialog,
+        "detect_package_type",
+        lambda: (_ for _ in ()).throw(RuntimeError("synthetic update-check failure")),
+    )
+    worker = update_dialog.UpdateCheckWorker(Config())
+    results = []
+    worker.finished.connect(lambda offer, message: results.append((offer, message)))
+    worker.run()
+    assert results == [(None, "synthetic update-check failure")]
+    assert any(
+        record.exc_info and "synthetic update-check failure" in str(record.exc_info[1])
+        for record in caplog.records
+    )
+
+
 def test_scheduler_ipv6_only_failure_keeps_regular_interval():
     scheduler = Scheduler(Config(interval_minutes=10))
     states = []
@@ -464,6 +501,17 @@ def test_scheduler_starts_next_timer_before_emitting_state(app):
     )
     scheduler.done({"last_check": {"result": "success"}}, [])
     assert timer_active_during_notification == [True]
+    scheduler.timer.stop()
+
+
+def test_paused_scheduler_does_not_reschedule_until_resumed(app):
+    scheduler = Scheduler(Config(interval_minutes=10))
+    scheduler.pause_and_wait()
+    scheduler.done({"last_check": {"result": "success"}}, [])
+    assert not scheduler.timer.isActive()
+    scheduler.resume()
+    assert scheduler.timer.isActive()
+    assert scheduler.timer.interval() == 600_000
     scheduler.timer.stop()
 
 

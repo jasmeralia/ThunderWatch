@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import subprocess
@@ -26,6 +27,8 @@ from .updater import (
     write_appimage_update_helper,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class UpdateDownloadWorker(QThread):
     completed = pyqtSignal(bool, str, object)
@@ -45,6 +48,7 @@ class UpdateDownloadWorker(QThread):
             )
             self.completed.emit(True, "Verified update download.", path)
         except Exception as exc:
+            logger.exception("Update download worker failed")
             self.completed.emit(False, str(exc) or type(exc).__name__, None)
 
 
@@ -75,6 +79,7 @@ class UpdateCheckWorker(QObject):
             )
             self.finished.emit(offer, "")
         except Exception as exc:
+            logger.exception("Update check worker failed")
             self.finished.emit(None, str(exc) or type(exc).__name__)
 
 
@@ -155,6 +160,7 @@ class UpdateDialog(QDialog):
                     env=environment,
                 )
             except OSError as exc:
+                logger.exception("Could not launch downloaded Windows installer")
                 self.status_label.setText(f"Could not start installer: {exc}")
                 return
             self._quit_application()
@@ -174,6 +180,7 @@ class UpdateDialog(QDialog):
                     raise RuntimeError("Could not start AppImage update helper.")
                 self._quit_application()
             except Exception as exc:
+                logger.exception("Could not launch staged AppImage update")
                 self.status_label.setText(f"Could not start AppImage update: {exc}")
                 if not started:
                     if helper:

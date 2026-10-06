@@ -13,11 +13,10 @@ as an operational IP monitor yet.**
 Requires Python 3.14 and Qt 6 development libraries on Linux.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-make lint PYTHON=.venv/bin/python
-make test PYTHON=.venv/bin/python
-make run PYTHON=.venv/bin/python
+make deps
+make lint
+make test
+make run
 ```
 
 Tests use synthetic provider responses and fake SMTP transports. They never contact

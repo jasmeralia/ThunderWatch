@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from collections.abc import Callable
 from typing import Any
 
-from PyQt6.QtCore import QSettings, QThread, QTimer, QUrl
+from PyQt6.QtCore import QEvent, QObject, QSettings, QThread, QTimer, QUrl
 from PyQt6.QtGui import QAction, QDesktopServices, QIcon
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import (
@@ -26,10 +27,19 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import __version__
 from .autostart import set_autostart
 from .config import Config
-from .logging_setup import configure_logging
-from .paths import app_data, resource_path, state_path
+from .error_handling import (
+    enable_fault_handler,
+    install_qt_message_handler,
+    install_sys_hook,
+    install_thread_hook,
+    install_unraisable_hook,
+    snapshot_previous_fatal_log,
+)
+from .logging_setup import active_log_directory, configure_logging
+from .paths import resource_path, state_path
 from .scheduler import Scheduler
 from .settings_dialog import SettingsDialog
 from .state import read_state
@@ -42,6 +52,18 @@ from .worker import TestEmailWorker
 
 ORG, APP = "WindsOfStorm", "ThunderWatch"
 _APP_HOLDER: dict[str, QApplication | None] = {"instance": None}
+logger = logging.getLogger(__name__)
+
+
+class ExceptionLoggingApplication(QApplication):
+    """Forward exceptions raised inside Qt event handlers to the process hook."""
+
+    def notify(self, receiver: QObject | None, event: QEvent | None) -> bool:
+        try:
+            return super().notify(receiver, event)
+        except Exception as exc:
+            sys.excepthook(type(exc), exc, exc.__traceback__)
+            return False
 
 
 def should_setup(settings: Any) -> bool:
@@ -143,15 +165,25 @@ class StatusWindow(QMainWindow):
         copy.clicked.connect(self.copy_ip)
         layout.addWidget(copy)
         logs = QPushButton("Open Log Folder")
-        logs.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(app_data() / "logs")))
-        )
+        logs.clicked.connect(self.open_log_folder)
         layout.addWidget(logs)
         widget = QWidget()
         widget.setLayout(layout)
         self.setCentralWidget(widget)
         scheduler.state_changed.connect(self.update_state)
         self.update_state(read_state(state_path()), [])
+
+    def open_log_folder(self) -> None:
+        log_dir = active_log_directory()
+        if log_dir is None:
+            QMessageBox.information(
+                self,
+                "Log files unavailable",
+                "ThunderWatch could not create a log file. Diagnostic messages were "
+                "sent to stderr.",
+            )
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir)))
 
     def copy_ip(self) -> None:
         values = [
@@ -306,6 +338,7 @@ class ThunderWatchApp:
         try:
             set_autostart(config.autostart)
         except Exception as exc:
+            logger.exception("Could not configure automatic startup")
             self._autostart_error = str(exc)
         icon = resource_path("icons/thunderwatch.png")
         self.tray = QSystemTrayIcon(QIcon(str(icon)), app)
@@ -513,7 +546,7 @@ class ThunderWatchApp:
         )
 
     def open_settings(self, *args: object) -> None:
-        dialog = SettingsDialog(self.settings)
+        dialog = SettingsDialog(self.settings, self.scheduler)
         if dialog.exec() == SettingsDialog.DialogCode.Accepted:
             config = Config.from_store(self.settings)
             if self.scheduler:
@@ -530,11 +563,24 @@ def main() -> int:
     parser.add_argument("--smoke-test", action="store_true")
     parser.add_argument("--show", action="store_true")
     args = parser.parse_args()
-    app = QApplication(sys.argv[:1])
+    app = ExceptionLoggingApplication(sys.argv[:1])
     _APP_HOLDER["instance"] = app
     app.setOrganizationName(ORG)
     app.setApplicationName(APP)
     app.setQuitOnLastWindowClosed(False)
+    log_dir = configure_logging()
+    install_sys_hook()
+    install_thread_hook()
+    install_unraisable_hook()
+    install_qt_message_handler()
+    snapshot_previous_fatal_log(log_dir)
+    enable_fault_handler(log_dir)
+    logger.info(
+        "ThunderWatch starting: version=%s platform=%s Python=%s",
+        __version__,
+        sys.platform,
+        sys.version.split()[0],
+    )
     apply_theme(app)
     if args.smoke_test:
         scheduler, window, tray = build_smoke_objects(app)
@@ -542,7 +588,6 @@ def main() -> int:
         window.close()
         tray.hide()
         return 0
-    configure_logging()
     name = f"thunderwatch-{os.getuid() if hasattr(os, 'getuid') else 'user'}"
     if notify_running_instance(name):
         return 0

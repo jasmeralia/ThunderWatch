@@ -80,7 +80,7 @@ jobs:
       - name: Install Flatpak runtime
         run: |
           sudo apt-get install --yes flatpak
-          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Build Linux packages
         env:
           APP_VERSION: ${{ inputs.app_version }}
