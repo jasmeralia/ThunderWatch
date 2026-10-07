@@ -27,6 +27,17 @@ def _setting_bool(value: Any, default: bool) -> bool:
     return default
 
 
+def _setting_int(value: Any) -> int:
+    try:
+        return int(value)
+    except OverflowError:
+        return -1
+    except TypeError:
+        return -1
+    except ValueError:
+        return -1
+
+
 @dataclass(frozen=True)
 class Config:
     setup_complete: bool = False
@@ -60,13 +71,13 @@ class Config:
         return cls(
             setup_complete=_setting_bool(store.value("setup/complete", False), False),
             smtp_host=str(store.value("smtp/host", "")),
-            smtp_port=int(store.value("smtp/port", 587)),
+            smtp_port=_setting_int(store.value("smtp/port", 587)),
             smtp_security=str(store.value("smtp/security", "auto")),
             smtp_username=str(store.value("smtp/username", "")),
             smtp_from=str(store.value("smtp/from", "")),
             smtp_recipient=str(store.value("smtp/recipient", "")),
             location=str(store.value("monitor/location", "")),
-            interval_minutes=int(store.value("monitor/interval_minutes", 10)),
+            interval_minutes=_setting_int(store.value("monitor/interval_minutes", 10)),
             ipv6=_setting_bool(store.value("monitor/ipv6", True), True),
             autostart=_setting_bool(store.value("startup/autostart", True), True),
             automatic_updates=_setting_bool(store.value("updates/automatic", True), True),

@@ -124,6 +124,31 @@ def test_config_completeness_validates_smtp_and_interval():
     ).complete
 
 
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("smtp/port", "not-a-port"), ("monitor/interval_minutes", "not-an-interval")],
+)
+def test_invalid_integer_settings_route_config_to_setup(key, value):
+    from thunderwatch.config import Config
+
+    class Store:
+        def __init__(self):
+            self.values = {
+                "setup/complete": True,
+                "smtp/host": "smtp.example",
+                "smtp/port": 587,
+                "smtp/username": "u",
+                "smtp/from": "a@example.com",
+                "smtp/recipient": "b@example.com",
+                "monitor/interval_minutes": 10,
+            }
+
+        def value(self, name, default=None):
+            return self.values.get(name, default) if name != key else value
+
+    assert not Config.from_store(Store()).complete
+
+
 def test_password_file_requires_opt_in_and_uses_owner_only_permissions(tmp_path, monkeypatch):
     import stat
 
