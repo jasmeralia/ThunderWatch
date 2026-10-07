@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable
@@ -12,7 +13,16 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, QProcess, QThread, QUrl, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QCloseEvent, QDesktopServices
-from PyQt6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout
+from PyQt6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QVBoxLayout,
+)
 
 from .config import Config
 from .paths import app_data
@@ -206,6 +216,10 @@ class UpdateDialog(QDialog):
                     if staged:
                         staged.unlink(missing_ok=True)
             return
+        package = self.offer.asset.name.rsplit(".", 1)[-1].casefold()
+        if package in {"flatpak", "snap"}:
+            self._show_linux_package_action(path, package)
+            return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
             self.status_label.setText(f"Downloaded {path}; open it to install the update.")
         else:
@@ -213,6 +227,39 @@ class UpdateDialog(QDialog):
                 f"Downloaded {path}. Install it with your package manager, "
                 "then restart ThunderWatch."
             )
+
+    def _show_linux_package_action(self, package_path: Path, package: str) -> None:
+        if package == "flatpak":
+            command = (
+                f"flatpak install --user --bundle --or-update {shlex.quote(str(package_path))}"
+            )
+            detail = (
+                "Install this local bundle to update ThunderWatch. This GitHub sideload does not "
+                "configure a Flatpak remote or receive updates from flatpak update."
+            )
+        elif package == "snap":
+            command = f"sudo snap install --dangerous {shlex.quote(str(package_path))}"
+            detail = (
+                "Install this local Snap explicitly; if ThunderWatch is already installed, Snap "
+                "treats the same-name local install as a refresh. --dangerous trusts this "
+                "downloaded file; Snap Store refreshes do not discover GitHub assets."
+            )
+        else:
+            raise ValueError(f"unsupported local package handoff: {package}")
+        box = QMessageBox(self)
+        box.setWindowTitle("Verified update ready")
+        box.setText(detail)
+        box.setInformativeText(f"Package: {package_path}\n\nCommand: {command}")
+        copy_button = box.addButton("Copy install command", QMessageBox.ButtonRole.ActionRole)
+        folder_button = box.addButton("Open package folder", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        box.exec()
+        if box.clickedButton() == copy_button:
+            clipboard = QApplication.clipboard()
+            if clipboard is not None:
+                clipboard.setText(command)
+        elif box.clickedButton() == folder_button:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(package_path.parent)))
 
     def _quit_application(self) -> None:
         if self.on_installed:

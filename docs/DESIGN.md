@@ -287,8 +287,8 @@ launches with `--autostart`.
 - **Flatpak:** request it through the XDG Background portal
   (`org.freedesktop.portal.Background.RequestBackground` with `autostart=true` and
   `commandline=["thunderwatch", "--autostart"]`), called over `QtDBus`. A desktop
-  file written inside the sandbox would not work. Report a portal denial in the
-  settings dialog.
+  file written inside the sandbox would not work. Keep the settings dialog open until
+  the asynchronous portal response arrives and show a denial on its Startup tab.
 - **Snap:** declare `autostart: thunderwatch.desktop` on the app in `snapcraft.yaml`.
   The app writes the desktop file to `$SNAP_USER_DATA/.config/autostart/`.
 
@@ -309,9 +309,12 @@ behavior matches TempestTrace's "Updates and release channels" section:
   leaves the current version running.
 - **Windows:** download the NSIS installer, quit ThunderWatch, and launch the
   installer detached. The installer's finish page relaunches the app.
-- **Linux:** hand off to the matching package format with the same Flatpak, Snap,
-  DEB, and RPM rules TempestTrace documents. The AppImage uses a verified
-  replace-after-exit with rollback.
+- **Linux:** DEB and RPM downloads open for a user-approved local install. Flatpak
+  bundles show a copyable `flatpak install --user --bundle --or-update <file>` command;
+  Snap downloads show `sudo snap install --dangerous <file>`. The UI also offers to
+  open the package folder. GitHub sideloads do not configure a Flatpak remote or
+  receive Snap Store updates. The AppImage uses a verified replace-after-exit with
+  rollback.
 - The version is embedded from the CI tag (`APP_VERSION` in the PyInstaller spec, as in
   TempestTrace). The source tree's `0.0.0` never counts as an installed release.
 
@@ -525,14 +528,16 @@ providers or SMTP servers.
   selection (Auto/465 → `SMTP_SSL`, otherwise STARTTLS). A STARTTLS failure surfaces
   as an error, as does a refused recipient. The password never appears in the returned
   error text.
-- **`state`:** atomic write, corrupt or unknown-version files degrade to empty, and the
+- **`state`:** atomic write, malformed, corrupt, unreadable, or unknown-version files
+  log a warning and degrade to empty, nested version-1 schema validation, and the
   history cap.
 - **`config` and `secrets`:** validation, the completeness rule, the keyring
   round-trip with a fake backend, and the fallback file only after explicit opt-in
   with `0600` on Linux.
 - **`autostart`:** Windows registry calls (faked `winreg`), the desktop-file
-  contents and `Exec` quoting, AppImage `$APPIMAGE`, the Flatpak portal call, and the
-  Snap path.
+  contents and `Exec` quoting, AppImage `$APPIMAGE`, Flatpak portal request, denial
+  and approval handling, and the Snap path. Rerunning the wizard pauses and joins
+  the scheduler worker before it updates the shared state file.
 - **Qt** (offscreen): startup routing, which shows the wizard with no config and only
   the tray with a complete config. Also: wizard page validation and the finish gate,
   tray menu order and badge states, single-instance "show" handoff, the

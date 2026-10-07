@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 
-from PyQt6.QtCore import QSettings, QThread
+from PyQt6.QtCore import QSettings, QThread, pyqtSlot
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -13,6 +14,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -22,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .autostart import set_autostart
+from .autostart import BackgroundPortal, QtBackgroundPortal, set_autostart
 from .config import Config, smtp_identity_changed
 from .paths import password_path
 from .scheduler import Scheduler
@@ -34,10 +36,27 @@ logger = logging.getLogger(__name__)
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, settings: QSettings, scheduler: Scheduler | None = None) -> None:  # noqa: PLR0915
+    def __init__(  # noqa: PLR0915
+        self,
+        settings: QSettings,
+        scheduler: Scheduler | None = None,
+        portal_client: BackgroundPortal | None = None,
+    ) -> None:
         super().__init__()
         self.settings = settings
         self.scheduler = scheduler
+        self.settings_saved = False
+        self.portal_client = portal_client or (
+            QtBackgroundPortal() if os.environ.get("FLATPAK_ID") else None
+        )
+        self._portal_waiting = False
+        if self.portal_client:
+            request_failed = getattr(self.portal_client, "request_failed", None)
+            request_completed = getattr(self.portal_client, "request_completed", None)
+            if request_failed is not None:
+                request_failed.connect(self._portal_request_failed)
+            if request_completed is not None:
+                request_completed.connect(self._portal_request_completed)
         config = Config.from_store(settings)
         self._test_thread: QThread | None = None
         self._test_worker: TestEmailWorker | None = None
@@ -92,6 +111,10 @@ class SettingsDialog(QDialog):
         self.autostart = QCheckBox("Start ThunderWatch when I sign in")
         self.autostart.setChecked(config.autostart)
         form.addRow(self.autostart)
+        self.startup_notice = QLabel("")
+        self.startup_notice.setWordWrap(True)
+        form.addRow(self.startup_notice)
+        self.startup_tab = startup
         self.tabs.addTab(startup, "Startup")
         updates = QWidget()
         form = QFormLayout(updates)
@@ -109,6 +132,9 @@ class SettingsDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
         )
+        save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        assert save_button is not None
+        self.save_button = save_button
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         controls.addWidget(buttons)
@@ -179,6 +205,21 @@ class SettingsDialog(QDialog):
             if self.scheduler:
                 self.scheduler.resume()
 
+    @pyqtSlot(str)
+    def _portal_request_failed(self, message: str) -> None:
+        if not self._portal_waiting:
+            return
+        self._portal_waiting = False
+        self.save_button.setEnabled(True)
+        self.startup_notice.setText(f"Settings were saved, but automatic startup failed: {message}")
+        self.tabs.setCurrentWidget(self.startup_tab)
+
+    @pyqtSlot()
+    def _portal_request_completed(self) -> None:
+        if self._portal_waiting:
+            self._portal_waiting = False
+            self.accept()
+
     def _save(self) -> None:
         if self._test_thread and self._test_thread.isRunning():
             QMessageBox.warning(self, "Test still running", "Wait for the email test to finish.")
@@ -242,9 +283,20 @@ class SettingsDialog(QDialog):
             "updates/include_beta": config.include_beta,
         }.items():
             self.settings.setValue(key, value)
+        self.settings_saved = True
+        wait_for_portal = bool(os.environ.get("FLATPAK_ID") and self.portal_client)
+        self._portal_waiting = wait_for_portal
+        if wait_for_portal:
+            self.save_button.setEnabled(False)
+            self.startup_notice.setText("Waiting for desktop startup permission…")
         try:
-            set_autostart(config.autostart)
+            set_autostart(config.autostart, portal_client=self.portal_client)
         except Exception as exc:
             logger.exception("Could not configure automatic startup from settings")
-            QMessageBox.warning(self, "Startup registration", str(exc))
-        self.accept()
+            self._portal_waiting = False
+            self.save_button.setEnabled(True)
+            self.startup_notice.setText(str(exc))
+            self.tabs.setCurrentWidget(self.startup_tab)
+            return
+        if not wait_for_portal:
+            self.accept()

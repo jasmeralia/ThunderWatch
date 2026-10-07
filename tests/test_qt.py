@@ -337,6 +337,122 @@ def test_appimage_update_stages_download_beside_running_image(app, tmp_path, mon
     dialog.close()
 
 
+@pytest.mark.parametrize(
+    ("package", "suffix", "command"),
+    [
+        ("flatpak", "flatpak", "flatpak install --user --bundle --or-update"),
+        ("snap", "snap", "sudo snap install --dangerous"),
+    ],
+)
+def test_flatpak_and_snap_updates_offer_copyable_install_command(  # noqa: PLR0913, PLR0917
+    app, tmp_path, monkeypatch, package, suffix, command
+):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from thunderwatch import update_dialog
+    from thunderwatch.updater import ReleaseAsset, UpdateOffer
+
+    path = tmp_path / f"ThunderWatch update.{suffix}"
+    path.write_bytes(b"verified synthetic package")
+    offer = UpdateOffer(
+        "0.2.0",
+        False,
+        "notes",
+        "https://example.invalid/release",
+        ReleaseAsset(path.name, "https://example.invalid/file", path.stat().st_size, "a" * 64),
+    )
+    selected = object()
+    messages = []
+    labels = []
+
+    class FakeMessageBox:
+        ButtonRole = QMessageBox.ButtonRole
+        StandardButton = QMessageBox.StandardButton
+
+        def __init__(self, *_args):
+            self.buttons = []
+
+        def setWindowTitle(self, title):
+            messages.append(("title", title))
+
+        def setText(self, text):
+            messages.append(("text", text))
+
+        def setInformativeText(self, text):
+            messages.append(("info", text))
+
+        def addButton(self, label, *_args):
+            labels.append(label)
+            if label == "Copy install command":
+                return selected
+            return object()
+
+        def exec(self):
+            pass
+
+        def clickedButton(self):
+            return selected
+
+    monkeypatch.setattr(update_dialog, "QMessageBox", FakeMessageBox)
+    monkeypatch.delenv("APPIMAGE", raising=False)
+    dialog = update_dialog.UpdateDialog(offer)
+    dialog._downloaded(True, "verified", path)
+    assert app.clipboard().text() == f"{command} '{path}'"
+    assert "Copy install command" in labels
+    assert "Open package folder" in labels
+    assert str(path) in next(value for kind, value in messages if kind == "info")
+    dialog.close()
+
+
+def test_settings_waits_for_flatpak_portal_result_and_shows_denial(app, monkeypatch):
+    from PyQt6.QtCore import QObject, pyqtSignal
+
+    from thunderwatch.settings_dialog import SettingsDialog
+
+    class PortalStub(QObject):
+        request_failed = pyqtSignal(str)
+        request_completed = pyqtSignal()
+
+        def request_background(self, options):
+            self.options = options
+
+    monkeypatch.setenv("FLATPAK_ID", "io.github.jasmeralia.ThunderWatch")
+    settings = QSettings("ThunderWatchTests", "FlatpakSettingsPortal")
+    settings.clear()
+    for key, value in {
+        "setup/complete": True,
+        "smtp/host": "smtp.example.com",
+        "smtp/port": 587,
+        "smtp/security": "starttls",
+        "smtp/username": "alerts@example.com",
+        "smtp/from": "alerts@example.com",
+        "smtp/recipient": "you@example.com",
+        "startup/autostart": True,
+    }.items():
+        settings.setValue(key, value)
+    portal = PortalStub()
+    dialog = SettingsDialog(settings, portal_client=portal)
+
+    dialog._save()
+
+    assert dialog.result() == 0
+    assert dialog.settings_saved
+    assert portal.options == {
+        "autostart": True,
+        "commandline": ["thunderwatch", "--autostart"],
+    }
+    portal.request_failed.emit("The desktop portal denied ThunderWatch automatic startup.")
+    assert dialog.result() == 0
+    assert "settings were saved" in dialog.startup_notice.text().casefold()
+    assert "denied" in dialog.startup_notice.text().casefold()
+    assert dialog.tabs.currentIndex() == 2
+    dialog._save()
+    assert dialog.result() == 0
+    portal.request_completed.emit()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    dialog.close()
+
+
 def test_wizard_retest_clears_pending_change_already_reported_by_test_email(app, monkeypatch):
     from pathlib import Path
 
@@ -402,6 +518,46 @@ def test_rerun_wizard_pauses_scheduler_until_state_update_finishes(app, monkeypa
     dialog._run_wizard()
     assert events == ["pause", "wizard", "resume"]
     dialog.close()
+
+
+def test_scheduler_pause_waits_until_inflight_state_write_finishes(app, monkeypatch):
+    from threading import Event, Timer
+
+    from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+
+    from thunderwatch import scheduler as scheduler_module
+
+    entered = Event()
+    release_write = Event()
+    write_finished = Event()
+
+    class SlowWorker(QObject):
+        finished = pyqtSignal(object, list)
+
+        def __init__(self, _config):
+            super().__init__()
+
+        @pyqtSlot()
+        def check(self):
+            entered.set()
+            release_write.wait(2)
+            write_finished.set()
+            self.finished.emit({"last_check": {"result": "success"}, "ipv4_failure_streak": 0}, [])
+
+    monkeypatch.setattr(scheduler_module, "CheckWorker", SlowWorker)
+    scheduler = Scheduler(Config())
+    scheduler.timer.stop()
+    scheduler._clock_timer.stop()
+    scheduler.run()
+    assert entered.wait(1)
+    Timer(0.05, release_write.set).start()
+
+    scheduler.pause_and_wait()
+
+    assert write_finished.is_set()
+    assert scheduler._paused
+    scheduler.timer.stop()
+    scheduler._clock_timer.stop()
 
 
 @pytest.mark.parametrize("dialog_kind", ["wizard", "settings", "update"])
@@ -766,7 +922,7 @@ def test_settings_dialog_saves_valid_values_and_reapplies_autostart(app, monkeyp
     dialog.location.setText("Example Home")
     applied = []
 
-    def reapply_autostart(enabled):
+    def reapply_autostart(enabled, **_kwargs):
         applied.append(enabled)
 
     monkeypatch.setattr(settings_dialog, "set_autostart", reapply_autostart)

@@ -599,7 +599,8 @@ class ThunderWatchApp:
 
     def open_settings(self, *args: object) -> None:
         dialog = SettingsDialog(self.settings, self.scheduler)
-        if dialog.exec() == SettingsDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted
+        if accepted or dialog.settings_saved:
             config = Config.from_store(self.settings)
             if self.scheduler:
                 self.scheduler.reconfigure(config)

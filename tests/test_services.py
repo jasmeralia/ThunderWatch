@@ -399,10 +399,14 @@ def test_flatpak_background_portal_denial_becomes_a_user_visible_error():
     assert background_portal_error(0, {"background": True, "autostart": True}, True) is None
     portal = QtBackgroundPortal()
     failures = []
+    completions = []
     portal.request_failed.connect(failures.append)
+    portal.request_completed.connect(lambda: completions.append(True))
     portal._requested_autostart = True
     portal._on_response(0, {"background": False, "autostart": False})
     assert failures == ["The desktop portal denied ThunderWatch automatic startup."]
+    portal._on_response(0, {"background": True, "autostart": True})
+    assert completions == [True]
 
 
 def test_keyring_read_failure_does_not_use_stale_password_file(monkeypatch, tmp_path):

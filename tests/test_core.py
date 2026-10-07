@@ -49,11 +49,11 @@ def test_successful_delivery_advances_baseline():
 def test_state_round_trip_and_history_cap(tmp_path):
     path = tmp_path / "state.json"
     state = empty_state()
-    state["history"] = [{"type": "event", "time": "now", "i": i} for i in range(60)]
+    state["history"] = [{"type": "lookups_recovered", "time": "now"} for _ in range(60)]
     write_state(path, state)
     restored = read_state(path)
     assert len(restored["history"]) == 50
-    assert restored["history"][0] == {"type": "event", "time": "now", "i": 10}
+    assert restored["history"][0] == {"type": "lookups_recovered", "time": "now"}
 
 
 def test_smtp_refused_recipient_is_failure_and_password_is_redacted():
@@ -657,16 +657,15 @@ def test_auto_tls_port_465_uses_implicit_tls_factory_only():
     assert "starttls" not in calls
 
 
-def test_corrupt_and_unknown_state_versions_are_rejected_without_resetting(tmp_path):
+def test_corrupt_and_unknown_state_versions_degrade_to_empty_state(tmp_path, caplog):
     import json
 
     path = tmp_path / "state.json"
     path.write_text("not json", encoding="utf-8")
-    with pytest.raises(json.JSONDecodeError):
-        read_state(path)
+    assert read_state(path) == empty_state()
     path.write_text(json.dumps({"version": 999, "history": []}), encoding="utf-8")
-    with pytest.raises(ValueError, match="invalid state schema"):
-        read_state(path)
+    assert read_state(path) == empty_state()
+    assert "Ignoring invalid state file" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -675,18 +674,44 @@ def test_corrupt_and_unknown_state_versions_are_rejected_without_resetting(tmp_p
         {"history": [1]},
         {"last_reported": []},
         {"last_observed": {"ipv4": []}},
+        {"last_observed": {"ipv4": {"value": "198.51.100.1", "time": "now", "providers": 1}}},
         {"last_check": {"families": []}},
         {"last_check": {"result": []}},
         {"pending": {"changes": {"ipv4": []}}},
         {"pending": {"attempted_at": []}},
         {"ipv4_failure_streak": []},
+        {"version": True},
+        {
+            "history": [
+                {
+                    "type": "lookups_failing",
+                    "time": "now",
+                    "last_time": "now",
+                    "attempts": True,
+                    "error": "offline",
+                }
+            ]
+        },
         {"history": [{"type": "change_detected", "time": "now", "changes": []}]},
     ],
 )
-def test_malformed_version_one_state_is_rejected(tmp_path, invalid_state):
+def test_malformed_version_one_state_degrades_to_empty_state(tmp_path, invalid_state):
     import json
 
     path = tmp_path / "state.json"
     path.write_text(json.dumps({**empty_state(), **invalid_state}), encoding="utf-8")
-    with pytest.raises(ValueError, match="invalid state schema"):
-        read_state(path)
+    assert read_state(path) == empty_state()
+
+
+def test_unreadable_state_degrades_to_empty_state(tmp_path, monkeypatch, caplog):
+    path = tmp_path / "state.json"
+    original = type(path).read_text
+
+    def unreadable(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("synthetic unreadable state")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(path), "read_text", unreadable)
+    assert read_state(path) == empty_state()
+    assert "synthetic unreadable state" in caplog.text

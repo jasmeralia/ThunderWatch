@@ -40,6 +40,7 @@ class QtBackgroundPortal(QObject):
     """Small QtDBus client for the XDG Background portal."""
 
     request_failed = pyqtSignal(str)
+    request_completed = pyqtSignal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -110,6 +111,8 @@ class QtBackgroundPortal(QObject):
         if error:
             logger.warning("Background portal request failed: %s", error)
             self.request_failed.emit(error)
+        else:
+            self.request_completed.emit()
         self._disconnect_response(self._request_path)
         with contextlib.suppress(ValueError):
             _PORTAL_CLIENTS.remove(self)

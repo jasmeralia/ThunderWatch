@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any, cast
 
 STATE_VERSION = 1
 FAMILIES = {"ipv4", "ipv6"}
+logger = logging.getLogger(__name__)
 
 
 def empty_state() -> dict[str, Any]:
@@ -64,12 +66,23 @@ def _valid_history(value: Any) -> bool:
         if not isinstance(event.get("time"), str):
             return False
         kind = event["type"]
+        if kind not in {
+            "change_detected",
+            "email_sent",
+            "email_failed",
+            "check_failed",
+            "lookups_failing",
+            "lookups_recovered",
+        }:
+            return False
         invalid_changes = kind in {"change_detected", "email_sent"} and not _change_map(
             event.get("changes")
         )
         invalid_failure = kind == "lookups_failing" and (
             not isinstance(event.get("last_time"), str)
             or not isinstance(event.get("attempts"), int)
+            or isinstance(event.get("attempts"), bool)
+            or event.get("attempts", 0) < 1
             or not isinstance(event.get("error"), str)
         )
         invalid_error = kind in {"email_failed", "check_failed"} and not isinstance(
@@ -132,7 +145,12 @@ def _valid_pending(pending: Any) -> bool:
 
 
 def _valid_state(data: Any) -> bool:
-    if not isinstance(data, dict) or data.get("version") != STATE_VERSION:
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("version"), int)
+        or isinstance(data.get("version"), bool)
+        or data.get("version") != STATE_VERSION
+    ):
         return False
     if any(
         key not in data or not _family_records(data[key])
@@ -159,6 +177,9 @@ def read_state(path: Path) -> dict[str, Any]:
             raise ValueError("invalid state schema")
         return cast(dict[str, Any], data)
     except FileNotFoundError:
+        return empty_state()
+    except (OSError, UnicodeError, ValueError, RecursionError) as exc:
+        logger.warning("Ignoring invalid state file %s: %s", path, exc)
         return empty_state()
 
 
