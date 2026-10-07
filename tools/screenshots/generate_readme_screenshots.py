@@ -56,6 +56,7 @@ def capture_readme(output_dir: str | Path) -> list[Path]:
             location="Example Home",
         )
         scheduler = Scheduler(config)
+        scheduler.timer.stop()
         window = StatusWindow(scheduler)
         history = [
             {
