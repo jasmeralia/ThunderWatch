@@ -304,6 +304,49 @@ def test_smoke_test_builds_qt_app_then_exits(monkeypatch, tmp_path):
     assert QApplication.instance().styleSheet() == GLOBAL_QSS
 
 
+def test_duplicate_launch_exits_before_setting_up_crash_diagnostics(monkeypatch):
+    from thunderwatch import app as app_module
+
+    events = []
+
+    class ServerStub:
+        @staticmethod
+        def removeServer(_name):
+            return True
+
+    class AppStub:
+        def __init__(self, _args):
+            pass
+
+        def setOrganizationName(self, _name):
+            pass
+
+        def setApplicationName(self, _name):
+            pass
+
+        def setQuitOnLastWindowClosed(self, _enabled):
+            pass
+
+    monkeypatch.setattr(app_module, "QLocalServer", ServerStub)
+    monkeypatch.setattr(app_module, "ExceptionLoggingApplication", AppStub)
+    monkeypatch.setattr(app_module, "apply_theme", lambda _app: None)
+    monkeypatch.setattr(
+        app_module,
+        "claim_local_server",
+        lambda *_args: events.append("claim") or False,
+    )
+    monkeypatch.setattr(
+        app_module,
+        "configure_logging",
+        lambda: events.append("configure logging"),
+    )
+    monkeypatch.setattr("sys.argv", ["thunderwatch"])
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+
+    assert app_module.main() == 0
+    assert events == ["claim"]
+
+
 def test_complete_config_routes_to_tray_without_setup(monkeypatch):
     from thunderwatch.app import should_setup
 

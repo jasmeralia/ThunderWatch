@@ -337,7 +337,9 @@ def build_smoke_objects(app: QApplication) -> tuple[Scheduler, StatusWindow, QSy
 
 
 class ThunderWatchApp:
-    def __init__(self, app: QApplication, show: bool) -> None:  # noqa: PLR0915
+    def __init__(  # noqa: PLR0915
+        self, app: QApplication, show: bool, server: QLocalServer | None = None
+    ) -> None:
         self.app = app
         self.settings = QSettings(ORG, APP)
         self.scheduler: Scheduler | None = None
@@ -357,14 +359,15 @@ class ThunderWatchApp:
         self._automatic_update_timer = QTimer()
         self._automatic_update_timer.setSingleShot(True)
         self._automatic_update_timer.timeout.connect(self._automatic_update_check)
-        self.server = QLocalServer()
+        self.server = server if server is not None else QLocalServer()
         self.app.aboutToQuit.connect(self._wait_for_workers)
-        name = instance_server_name()
-        if not claim_local_server(
-            self.server, name, notify_running_instance, QLocalServer.removeServer
-        ):
-            QTimer.singleShot(0, app.quit)
-            return
+        if server is None:
+            name = instance_server_name()
+            if not claim_local_server(
+                self.server, name, notify_running_instance, QLocalServer.removeServer
+            ):
+                QTimer.singleShot(0, app.quit)
+                return
         self.server.newConnection.connect(self.show_status)
         if should_setup(self.settings):
             wizard = SetupWizard(self.settings)
@@ -621,6 +624,28 @@ def main() -> int:
     app.setOrganizationName(ORG)
     app.setApplicationName(APP)
     app.setQuitOnLastWindowClosed(False)
+    apply_theme(app)
+    if args.smoke_test:
+        _setup_crash_diagnostics()
+        scheduler, window, tray = build_smoke_objects(app)
+        scheduler.timer.stop()
+        window.close()
+        tray.hide()
+        return 0
+    server = QLocalServer()
+    if not claim_local_server(
+        server,
+        instance_server_name(),
+        notify_running_instance,
+        QLocalServer.removeServer,
+    ):
+        return 0
+    _setup_crash_diagnostics()
+    ThunderWatchApp(app, args.show, server)
+    return app.exec()
+
+
+def _setup_crash_diagnostics() -> None:
     log_dir = configure_logging()
     install_sys_hook()
     install_thread_hook()
@@ -634,15 +659,3 @@ def main() -> int:
         sys.platform,
         sys.version.split()[0],
     )
-    apply_theme(app)
-    if args.smoke_test:
-        scheduler, window, tray = build_smoke_objects(app)
-        scheduler.timer.stop()
-        window.close()
-        tray.hide()
-        return 0
-    name = instance_server_name()
-    if notify_running_instance(name):
-        return 0
-    ThunderWatchApp(app, args.show)
-    return app.exec()

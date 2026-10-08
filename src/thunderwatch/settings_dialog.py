@@ -139,8 +139,20 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         controls.addWidget(buttons)
         layout.addLayout(controls)
+        self._sync_busy_controls()
+
+    def _operation_pending(self) -> bool:
+        return self._portal_waiting or self._test_thread is not None
+
+    def _sync_busy_controls(self) -> None:
+        pending = self._operation_pending()
+        self.run_wizard.setEnabled(not pending)
+        self.test_button.setEnabled(not pending)
+        self.save_button.setEnabled(not pending)
 
     def _send_test(self) -> None:
+        if self._operation_pending():
+            return
         config = Config(
             setup_complete=True,
             smtp_host=self.host.text().strip(),
@@ -168,37 +180,34 @@ class SettingsDialog(QDialog):
         thread.finished.connect(self._test_worker_stopped)
         self._test_worker = worker
         self._test_thread = thread
-        self.test_button.setEnabled(False)
+        self._sync_busy_controls()
         thread.started.connect(worker.run)
         thread.start()
 
     def _test_worker_stopped(self) -> None:
         self._test_worker = None
         self._test_thread = None
+        self._sync_busy_controls()
 
     def closeEvent(self, event: QCloseEvent | None) -> None:
         if event is None:
             return
-        if self._test_thread and self._test_thread.isRunning():
+        if self._operation_pending():
             event.ignore()
             return
         super().closeEvent(event)
 
     def reject(self) -> None:
-        if self._test_thread and self._test_thread.isRunning():
+        if self._operation_pending():
             return
         super().reject()
 
     def _test_finished(self, success: bool, message: str) -> None:
-        self.test_button.setEnabled(True)
         icon = QMessageBox.Icon.Information if success else QMessageBox.Icon.Warning
         QMessageBox(icon, "ThunderWatch test email", message, QMessageBox.StandardButton.Ok).exec()
 
     def _run_wizard(self) -> None:
-        if self._portal_waiting:
-            return
-        if self._test_thread and self._test_thread.isRunning():
-            QMessageBox.warning(self, "Test still running", "Wait for the email test to finish.")
+        if self._operation_pending():
             return
         if self.scheduler:
             self.scheduler.pause_and_wait()
@@ -215,7 +224,7 @@ class SettingsDialog(QDialog):
         if not self._portal_waiting:
             return
         self._portal_waiting = False
-        self.save_button.setEnabled(True)
+        self._sync_busy_controls()
         self.startup_notice.setText(f"Settings were saved, but automatic startup failed: {message}")
         self.tabs.setCurrentWidget(self.startup_tab)
 
@@ -223,6 +232,7 @@ class SettingsDialog(QDialog):
     def _portal_request_completed(self) -> None:
         if self._portal_waiting:
             self._portal_waiting = False
+            self._sync_busy_controls()
             self.accept()
 
     def _save(self) -> None:
@@ -291,15 +301,15 @@ class SettingsDialog(QDialog):
         self.settings_saved = True
         wait_for_portal = bool(os.environ.get("FLATPAK_ID") and self.portal_client)
         self._portal_waiting = wait_for_portal
+        self._sync_busy_controls()
         if wait_for_portal:
-            self.save_button.setEnabled(False)
             self.startup_notice.setText("Waiting for desktop startup permission…")
         try:
             set_autostart(config.autostart, portal_client=self.portal_client)
         except Exception as exc:
             logger.exception("Could not configure automatic startup from settings")
             self._portal_waiting = False
-            self.save_button.setEnabled(True)
+            self._sync_busy_controls()
             self.startup_notice.setText(str(exc))
             self.tabs.setCurrentWidget(self.startup_tab)
             return

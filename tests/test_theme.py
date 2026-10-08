@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
 
 from thunderwatch import theme, tokens
@@ -18,3 +18,13 @@ def test_galefling_palette_is_applied_to_qt_application() -> None:
     assert app.styleSheet() == theme.GLOBAL_QSS
     assert tokens.SURFACE_RAISED in theme.GLOBAL_QSS
     assert tokens.BORDER in theme.GLOBAL_QSS
+
+
+def test_theme_reapplies_palette_when_stylesheet_is_already_current() -> None:
+    app = QApplication.instance() or QApplication([])
+    theme.apply_theme(app)
+    app.setPalette(QPalette())
+
+    theme.apply_theme(app)
+
+    assert app.palette().color(QPalette.ColorRole.Window) == QColor(tokens.SURFACE)

@@ -180,7 +180,7 @@ def apply_theme(app: QApplication, window: QWidget | None = None) -> None:
     """Apply GaleFling's dark palette and component styling."""
     if app.styleSheet() != GLOBAL_QSS:
         app.setStyle("Fusion")
-        _apply_palette(app)
         app.setStyleSheet(GLOBAL_QSS)
+    _apply_palette(app)
     if window is not None:
         _set_windows_dark_title_bar(window)

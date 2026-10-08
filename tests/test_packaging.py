@@ -68,6 +68,15 @@ def test_nsis_user_abort_restores_and_relaunches_application():
     assert "Call .onInstFailed" in aborted_callback
 
 
+def test_nsis_clears_rollback_flag_after_successful_cleanup():
+    installer = (ROOT / "build/installer.nsi").read_text()
+    section = installer.split('Section "ThunderWatch" SecMain', 1)[1].split("SectionEnd", 1)[0]
+    cleanup = section.index('!insertmacro RemoveRollbackFile "Uninstall.exe"')
+    rollback_reset = section.index('StrCpy $R7 "0"', cleanup)
+    rollback_directory_remove = section.index('RMDir "$INSTDIR\\.thunderwatch-upgrade-rollback"')
+    assert cleanup < rollback_reset < rollback_directory_remove
+
+
 def test_release_retry_detection_includes_cancelled_release_jobs():
     workflow = (ROOT / ".github/workflows/release.yml").read_text()
     assert '.conclusion == "cancelled"' in workflow

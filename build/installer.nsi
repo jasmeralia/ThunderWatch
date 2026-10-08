@@ -108,6 +108,8 @@ Section "ThunderWatch" SecMain
   !insertmacro RemoveRollbackFile "ThunderWatch.exe"
   !insertmacro RemoveRollbackFile "LICENSE"
   !insertmacro RemoveRollbackFile "Uninstall.exe"
+  ; The install is committed. Abort callbacks must not restore deleted backups.
+  StrCpy $R7 "0"
   RMDir "$INSTDIR\.thunderwatch-upgrade-rollback"
   Goto install_done
 

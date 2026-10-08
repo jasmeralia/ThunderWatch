@@ -109,6 +109,8 @@ class SetupWizard(QWizard):
         self.test_status = QLabel("No test email sent yet.")
         self.test_succeeded = False
         self.test_addresses: dict[str, str] = {}
+        self._form_revision = 0
+        self._test_revision = 0
         self._test_thread: QThread | None = None
         self._test_worker: TestEmailWorker | None = None
         self.save_offline.toggled.connect(self._update_finish_button)
@@ -147,6 +149,7 @@ class SetupWizard(QWizard):
         self._update_finish_button()
 
     def _invalidate_test(self, *_args: object) -> None:
+        self._form_revision += 1
         if not self.test_succeeded and not self.test_addresses:
             return
         self.test_succeeded = False
@@ -166,6 +169,8 @@ class SetupWizard(QWizard):
         return True
 
     def send_test_email(self) -> None:
+        if self._test_thread is not None:
+            return
         self.test_succeeded = False
         self.test_addresses = {}
         self._update_finish_button()
@@ -194,6 +199,7 @@ class SetupWizard(QWizard):
         thread.finished.connect(self._test_worker_stopped)
         self._test_worker = worker
         self._test_thread = thread
+        self._test_revision = self._form_revision
         self.test_button.setEnabled(False)
         self.test_status.setText("Looking up addresses and sending the test email…")
         thread.started.connect(worker.run)
@@ -202,6 +208,8 @@ class SetupWizard(QWizard):
     def _test_worker_stopped(self) -> None:
         self._test_worker = None
         self._test_thread = None
+        self.test_button.setEnabled(True)
+        self._update_finish_button()
 
     def closeEvent(self, event: QCloseEvent | None) -> None:
         if event is None:
@@ -212,11 +220,14 @@ class SetupWizard(QWizard):
         super().closeEvent(event)
 
     def _test_finished(self, success: bool, message: str) -> None:
-        if success and self._test_worker:
+        if success and self._test_worker and self._test_revision == self._form_revision:
             self.test_succeeded = True
             self.test_addresses = self._test_worker.current_addresses.copy()
+        elif success:
+            self.test_status.setText("Settings changed during the test; send a new test email.")
+            self._update_finish_button()
+            return
         self.test_status.setText(message)
-        self.test_button.setEnabled(True)
         self._update_finish_button()
 
     def reject(self) -> None:

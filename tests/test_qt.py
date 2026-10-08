@@ -282,6 +282,29 @@ def test_wizard_invalidates_successful_test_when_smtp_fields_change(app):
     wizard.close()
 
 
+def test_wizard_discards_test_result_when_fields_change_during_test(app):
+    settings = QSettings("ThunderWatchTests", "WizardStaleTestResult")
+    settings.clear()
+    wizard = SetupWizard(settings)
+
+    class WorkerStub:
+        def __init__(self):
+            self.current_addresses = {"ipv4": "198.51.100.8"}
+
+    wizard._test_worker = WorkerStub()
+    wizard._test_thread = object()
+    wizard.test_button.setEnabled(False)
+    wizard.host.setText("smtp.changed.example")
+    wizard._test_finished(True, "Synthetic test succeeded")
+
+    assert not wizard.test_succeeded
+    assert wizard.test_addresses == {}
+    assert "changed" in wizard.test_status.text().casefold()
+    assert not wizard.test_button.isEnabled()
+    wizard._test_worker_stopped()
+    wizard.close()
+
+
 def test_change_balloon_requires_a_successful_change_delivery():
     from thunderwatch.app import change_balloon_message
 
@@ -453,6 +476,82 @@ def test_settings_waits_for_flatpak_portal_result_and_shows_denial(app, monkeypa
     dialog.close()
 
 
+def test_settings_blocks_wizard_and_closure_while_portal_request_is_pending(app, monkeypatch):
+    from PyQt6.QtCore import QObject, pyqtSignal
+    from PyQt6.QtGui import QCloseEvent
+
+    from thunderwatch import settings_dialog as settings_module
+    from thunderwatch.settings_dialog import SettingsDialog
+
+    wizard_calls = []
+
+    class WizardStub:
+        def __init__(self, _settings):
+            wizard_calls.append("created")
+
+        def exec(self):
+            wizard_calls.append("executed")
+            return QDialog.DialogCode.Accepted
+
+    from PyQt6.QtWidgets import QDialog
+
+    monkeypatch.setattr(settings_module, "SetupWizard", WizardStub)
+
+    class PortalStub(QObject):
+        request_failed = pyqtSignal(str)
+        request_completed = pyqtSignal()
+
+    dialog = SettingsDialog(
+        QSettings("ThunderWatchTests", "PortalGuards"), portal_client=PortalStub()
+    )
+    dialog._portal_waiting = True
+    dialog._sync_busy_controls()
+    event = QCloseEvent()
+    dialog.closeEvent(event)
+    dialog.reject()
+    dialog._run_wizard()
+    assert not event.isAccepted()
+    assert dialog.result() == 0
+    assert not dialog.run_wizard.isEnabled()
+    assert wizard_calls == []
+    dialog._portal_waiting = False
+    dialog.close()
+
+
+def test_settings_blocks_wizard_while_email_test_thread_is_running(app, monkeypatch):
+    from PyQt6.QtWidgets import QDialog
+
+    from thunderwatch import settings_dialog as settings_module
+    from thunderwatch.settings_dialog import SettingsDialog
+
+    wizard_calls = []
+
+    class WizardStub:
+        def __init__(self, _settings):
+            wizard_calls.append("created")
+
+        def exec(self):
+            wizard_calls.append("executed")
+            return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(settings_module, "SetupWizard", WizardStub)
+
+    dialog = SettingsDialog(QSettings("ThunderWatchTests", "WizardEmailGuard"))
+
+    class RunningThread:
+        def isRunning(self):
+            return True
+
+    dialog._test_thread = RunningThread()
+    dialog._sync_busy_controls()
+    dialog._run_wizard()
+    assert dialog.result() == 0
+    assert not dialog.run_wizard.isEnabled()
+    assert wizard_calls == []
+    dialog._test_thread = None
+    dialog.close()
+
+
 def test_wizard_retest_clears_pending_change_already_reported_by_test_email(app, monkeypatch):
     from pathlib import Path
 
@@ -593,7 +692,8 @@ def test_worker_dialog_refuses_close_while_thread_is_running(app, dialog_kind):
     assert not event.isAccepted()
 
 
-def test_update_dialog_shows_channel_release_notes_size_and_explicit_button(app):
+def test_update_dialog_shows_channel_release_notes_size_and_explicit_button(app, monkeypatch):
+    from thunderwatch import update_dialog
     from thunderwatch.update_dialog import UpdateDialog
     from thunderwatch.updater import ReleaseAsset, UpdateOffer
 
@@ -609,7 +709,10 @@ def test_update_dialog_shows_channel_release_notes_size_and_explicit_button(app)
             "a" * 64,
         ),
     )
+    monkeypatch.setattr(update_dialog, "installed_version", lambda: "0.1.0")
     dialog = UpdateDialog(offer)
+    assert "0.1.0" in dialog.channel_label.text()
+    assert offer.version in dialog.channel_label.text()
     assert "Beta" in dialog.channel_label.text()
     assert "Synthetic release notes" in dialog.notes.toPlainText()
     assert dialog.download_button.text() == "Download and Update"

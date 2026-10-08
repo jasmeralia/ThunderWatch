@@ -116,8 +116,9 @@ class UpdateDialog(QDialog):
         self.worker: UpdateDownloadWorker | None = None
         self.setWindowTitle("ThunderWatch update available")
         layout = QVBoxLayout(self)
+        current = installed_version() or "unknown"
         self.channel_label = QLabel(
-            f"Version {offer.version} · {'Beta' if offer.is_beta else 'Stable'}"
+            f"{current} → {offer.version} · {'Beta' if offer.is_beta else 'Stable'}"
         )
         self.notes = QPlainTextEdit()
         self.notes.setReadOnly(True)
