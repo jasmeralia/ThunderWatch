@@ -195,6 +195,11 @@ class SettingsDialog(QDialog):
         QMessageBox(icon, "ThunderWatch test email", message, QMessageBox.StandardButton.Ok).exec()
 
     def _run_wizard(self) -> None:
+        if self._portal_waiting:
+            return
+        if self._test_thread and self._test_thread.isRunning():
+            QMessageBox.warning(self, "Test still running", "Wait for the email test to finish.")
+            return
         if self.scheduler:
             self.scheduler.pause_and_wait()
         try:
