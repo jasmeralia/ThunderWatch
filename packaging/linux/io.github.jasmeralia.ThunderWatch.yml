@@ -1,0 +1,25 @@
+app-id: io.github.jasmeralia.ThunderWatch
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: thunderwatch
+finish-args:
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.secrets
+modules:
+  - name: thunderwatch
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 thunderwatch /app/bin/thunderwatch
+      - install -Dm644 io.github.jasmeralia.ThunderWatch.desktop /app/share/applications/io.github.jasmeralia.ThunderWatch.desktop
+      - install -Dm644 thunderwatch.png /app/share/icons/hicolor/256x256/apps/io.github.jasmeralia.ThunderWatch.png
+    sources:
+      - type: file
+        path: thunderwatch
+      - type: file
+        path: thunderwatch.desktop
+      - type: file
+        path: thunderwatch.png

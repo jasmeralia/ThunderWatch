@@ -1,9 +1,27 @@
 # ThunderWatch design and implementation plan
 
-Status: design stage. Nothing described here is implemented yet. ThunderWatch joins
-GaleFling, StormFuse, and TempestTrace in the Storm Desktop Suite and reuses their
+Status: implementation in progress. The Qt-free core, desktop shell, updater offer and
+verified-download flow, release workflows, and synthetic tests exist. Package release
+CI has not yet completed an end-to-end run, and platform integration and hands-on
+acceptance remain incomplete. Do not treat the current build as an operational IP
+monitor. ThunderWatch joins GaleFling, StormFuse,
+and TempestTrace in the Storm Desktop Suite and reuses their
 framework, dark theme, updater, packaging, and CI conventions. TempestTrace is the
 primary template because it is the newest and smallest of the three.
+
+## Implementation status
+
+Implemented files currently include `src/thunderwatch/ipcheck.py`, `monitor.py`,
+`notifier.py`, `state.py`, `config.py`, `secrets.py`, and `updater.py`, plus a first
+Qt startup path, five-page setup wizard, status window, tray menu, and screenshot tools.
+The suite theme and icon are copied from TempestTrace. Core and updater tests use fake
+providers/SMTP and synthetic data.
+
+The design is not complete yet: full native package installation acceptance,
+package-specific update handoff validation, some settings/status behavior, and
+hands-on acceptance checks still need work. Network-online and long-resume triggers
+are implemented; verify them during hands-on acceptance. The README describes this
+as development software until those checks pass.
 
 ## Goal and boundaries
 
@@ -82,8 +100,10 @@ triggers an email and never overwrites the stored address.
 
 - First check runs 15 s after launch, giving sign-in networking time to come up.
 - Regular interval: 10 minutes by default, configurable from 5 to 720 minutes.
-- After a failure or an inconclusive result, retry after 1, 2, 4, then 8 minutes,
-  capped at the regular interval. The first success restores the normal interval.
+- After an IPv4 failure or inconclusive result, retry after 1, 2, 4, then 8 minutes,
+  capped at the regular interval. An IPv6-only failure keeps the regular interval because
+  IPv6 may be unavailable on the network. The first successful IPv4 check restores the
+  normal interval.
 - Check immediately when `QNetworkInformation` reports reachability becoming online,
   and after a suspend/resume. Detect resume as a wall-clock gap of more than twice
   the interval between timer ticks.
@@ -236,13 +256,23 @@ the recipient does not reset `last_reported`.
   emails, or update requests.
 - **State:** `<AppDataLocation>/state.json`, written atomically (temporary file plus
   `os.replace`) and versioned. Fields: `last_reported` per family plus a timestamp,
-  `last_observed`, `last_check` (time, result, providers), `pending` (the change
-  awaiting delivery, with its last error), and `history` (capped at 50). An invalid
+  `last_observed`, `last_check` (time, overall result, per-family results, providers),
+  `pending` (the change awaiting delivery, with its last error), and `history` (capped
+  at 50). An invalid
   or unreadable state file degrades to empty state with a logged warning, as in
   `ip-monitor.py`'s `read_state`. The next confirmed address then sends a "monitoring
   started" email.
-- **Logs:** a rotating log in `<AppDataLocation>/logs/` (1 MB × 5). IP addresses may be
-  logged; secrets may not.
+- **Logs and crash diagnostics:** the rotating `thunderwatch.log` is stored in
+  `<AppDataLocation>/logs/` (1 MB × 5), with a private per-user temporary-directory
+  fallback if the application data directory cannot be written. If neither location
+  accepts a file, normal logs go to stderr. The Status window's **Open Log Folder**
+  button follows the active file-log location. Uncaught main-thread, Qt event,
+  worker-thread, and unraisable Python exceptions are recorded with tracebacks; Qt
+  warnings and fatal messages include their source context. `faulthandler` writes native/fatal Python
+  crash details for all threads to `fatal_errors.log`, and a fatal report is archived
+  at next startup. Forced termination, power loss, and OS kills that do not produce a
+  Python/Qt fatal report cannot be captured. IP addresses may be logged; secrets may
+  not.
 
 ## Start at sign-in
 
@@ -257,8 +287,8 @@ launches with `--autostart`.
 - **Flatpak:** request it through the XDG Background portal
   (`org.freedesktop.portal.Background.RequestBackground` with `autostart=true` and
   `commandline=["thunderwatch", "--autostart"]`), called over `QtDBus`. A desktop
-  file written inside the sandbox would not work. Report a portal denial in the
-  settings dialog.
+  file written inside the sandbox would not work. Keep the settings dialog open until
+  the asynchronous portal response arrives and show a denial on its Startup tab.
 - **Snap:** declare `autostart: thunderwatch.desktop` on the app in `snapcraft.yaml`.
   The app writes the desktop file to `$SNAP_USER_DATA/.config/autostart/`.
 
@@ -279,9 +309,12 @@ behavior matches TempestTrace's "Updates and release channels" section:
   leaves the current version running.
 - **Windows:** download the NSIS installer, quit ThunderWatch, and launch the
   installer detached. The installer's finish page relaunches the app.
-- **Linux:** hand off to the matching package format with the same Flatpak, Snap,
-  DEB, and RPM rules TempestTrace documents. The AppImage uses a verified
-  replace-after-exit with rollback.
+- **Linux:** DEB and RPM downloads open for a user-approved local install. Flatpak
+  bundles show a copyable `flatpak install --user --bundle --or-update <file>` command;
+  Snap downloads show `sudo snap install --dangerous <file>`. The UI also offers to
+  open the package folder. GitHub sideloads do not configure a Flatpak remote or
+  receive Snap Store updates. The AppImage uses a verified replace-after-exit with
+  rollback.
 - The version is embedded from the CI tag (`APP_VERSION` in the PyInstaller spec, as in
   TempestTrace). The source tree's `0.0.0` never counts as an installed release.
 
@@ -386,7 +419,8 @@ widgets, rendered offscreen with synthetic data, and embed them in the README.
   `docs/SETUP_WIZARD.md`, a step-by-step walkthrough linked from the README.
 - **`make screenshots`** (depends on `deps`) runs both generators with
   `QT_QPA_PLATFORM=offscreen`. `make lint` runs ruff over `tools/screenshots/` as
-  well.
+  well. The Makefile runs lint, tests, screenshots, and the app with the project
+  `.venv`; `make deps` creates it and installs the development dependencies.
 - **README "Screenshots" section:** says the images come from the real interface with
   synthetic data and no real addresses or credentials. It embeds the status window,
   tray menu and states, settings, and wizard images with a one-line caption each,
@@ -458,11 +492,10 @@ Applied to `jasmeralia/ThunderWatch` to match the rest of the suite.
   Every master merge therefore produces a **prerelease**. Morgan promotes a validated
   prerelease to stable by hand.
 - `.github/workflows/linux-packages.yml`: TempestTrace's workflow minus the OBS and
-  Dropbox fixture steps. For each format it installs, runs `--smoke-test`, and
-  uninstalls. Flatpak adds a permissions assertion (network, StatusNotifierWatcher,
-  secrets, and *no* filesystem grants). Under `xvfb` with a fake
-  `StatusNotifierWatcher`, it also checks that a preconfigured instance starts
-  without opening a window.
+  Dropbox fixture steps. DEB and RPM install, run `--smoke-test`, and uninstall;
+  Flatpak and Snap install, run `--smoke-test`, and uninstall; AppImage runs its
+  smoke test directly. Flatpak also checks network, StatusNotifierWatcher, and
+  secrets permissions, with no filesystem grants.
 - **Codecov:** the repo must be active in Codecov for OIDC uploads. Confirm this when
   CI lands, before adding the required contexts.
 
@@ -495,14 +528,16 @@ providers or SMTP servers.
   selection (Auto/465 → `SMTP_SSL`, otherwise STARTTLS). A STARTTLS failure surfaces
   as an error, as does a refused recipient. The password never appears in the returned
   error text.
-- **`state`:** atomic write, corrupt or unknown-version files degrade to empty, and the
+- **`state`:** atomic write, malformed, corrupt, unreadable, or unknown-version files
+  log a warning and degrade to empty, nested version-1 schema validation, and the
   history cap.
 - **`config` and `secrets`:** validation, the completeness rule, the keyring
   round-trip with a fake backend, and the fallback file only after explicit opt-in
   with `0600` on Linux.
 - **`autostart`:** Windows registry calls (faked `winreg`), the desktop-file
-  contents and `Exec` quoting, AppImage `$APPIMAGE`, the Flatpak portal call, and the
-  Snap path.
+  contents and `Exec` quoting, AppImage `$APPIMAGE`, Flatpak portal request, denial
+  and approval handling, and the Snap path. Rerunning the wizard pauses and joins
+  the scheduler worker before it updates the shared state file.
 - **Qt** (offscreen): startup routing, which shows the wizard with no config and only
   the tray with a complete config. Also: wizard page validation and the finish gate,
   tray menu order and badge states, single-instance "show" handoff, the
@@ -559,5 +594,7 @@ providers or SMTP servers.
 - The default check interval is **10 minutes** (ip-monitor uses hourly). It is
   configurable from 5 to 720 minutes.
 - If no OS keyring is usable, an opt-in owner-only password file is the fallback. The
-  alternative is to refuse to save, which would block Linux desktops without a Secret
-  Service.
+  file has a sidecar recording its SMTP username and host, so a saved password is never
+  tried against a different SMTP account. Legacy password files without matching
+  metadata are ignored. The alternative is to refuse to save, which would block Linux
+  desktops without a Secret Service.
