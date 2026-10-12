@@ -175,6 +175,7 @@ class StatusWindow(QMainWindow):
         scheduler: Scheduler,
         on_test: Callable[[], None] | None = None,
         on_settings: Callable[[], None] | None = None,
+        on_quit: Callable[[], None] | None = None,
     ) -> None:
         super().__init__()
         self.scheduler = scheduler
@@ -208,10 +209,20 @@ class StatusWindow(QMainWindow):
         logs = QPushButton("Open Log Folder")
         logs.clicked.connect(self.open_log_folder)
         layout.addWidget(logs)
+        self.quit_button = QPushButton("Quit")
+        self.quit_button.clicked.connect(on_quit or QApplication.quit)
+        self.quit_button.hide()
+        layout.addWidget(self.quit_button)
         widget = QWidget()
         widget.setLayout(layout)
         self.setCentralWidget(widget)
         scheduler.state_changed.connect(self.update_state)
+        self.update_state(read_state(state_path()), [])
+
+    def set_tray_fallback(self, notice: str) -> None:
+        self.tray_fallback = True
+        self.notice = notice
+        self.quit_button.show()
         self.update_state(read_state(state_path()), [])
 
     def open_log_folder(self) -> None:
@@ -419,7 +430,9 @@ class ThunderWatchApp:
                 self._autostart_error,
                 QSystemTrayIcon.MessageIcon.Warning,
             )
-        self.window = StatusWindow(self.scheduler, self.send_test_email, self.open_settings)
+        self.window = StatusWindow(
+            self.scheduler, self.send_test_email, self.open_settings, self.app.quit
+        )
         self.scheduler.state_changed.connect(self.refresh_tray)
         self.tray.messageClicked.connect(self.show_status)
         self.refresh_tray(read_state(state_path()), [])
@@ -445,12 +458,10 @@ class ThunderWatchApp:
         elif state == "fallback":
             self._tray_timer.stop()
             if self.window:
-                self.window.tray_fallback = True
-                self.window.notice = (
+                self.window.set_tray_fallback(
                     "No system tray was found. This window will stand in for the tray; "
                     "closing it minimizes ThunderWatch."
                 )
-                self.window.update_state(read_state(state_path()), [])
                 self.show_status()
         else:
             self._tray_elapsed += 1

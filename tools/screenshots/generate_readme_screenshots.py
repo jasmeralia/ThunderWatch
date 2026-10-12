@@ -4,15 +4,34 @@ from __future__ import annotations
 
 import os
 import tempfile
+from contextlib import ExitStack, suppress
 from pathlib import Path
+from typing import Any
+
+
+def _close_safely(widget: Any) -> None:
+    with suppress(RuntimeError):
+        widget.close()
 
 
 def capture_readme(output_dir: str | Path) -> list[Path]:
+    env_keys = ("HOME", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "QT_QPA_PLATFORM")
+    previous_env = {key: os.environ.get(key) for key in env_keys}
+    try:
+        with ExitStack() as cleanup:
+            return _capture_readme(output_dir, cleanup)
+    finally:
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _capture_readme(output_dir: str | Path, cleanup: ExitStack) -> list[Path]:
     """Render the README screenshot set using isolated Qt paths and synthetic data."""
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-    env_keys = ("HOME", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA", "QT_QPA_PLATFORM")
-    previous_env = {key: os.environ.get(key) for key in env_keys}
     with tempfile.TemporaryDirectory(prefix="thunderwatch-screenshots-") as scratch:
         root = Path(scratch)
         for key in ("HOME", "XDG_CONFIG_HOME", "APPDATA", "LOCALAPPDATA"):
@@ -41,12 +60,6 @@ def capture_readme(output_dir: str | Path) -> list[Path]:
         settings.setValue("smtp/recipient", "you@example.com")
         settings.setValue("monitor/location", "Example Home")
         original_read_state = app_module.read_state
-        app_module.read_state = lambda _path: {
-            "last_observed": {},
-            "last_reported": {},
-            "pending": {},
-            "history": [],
-        }
         config = Config(
             setup_complete=True,
             smtp_host="smtp.example.com",
@@ -57,7 +70,15 @@ def capture_readme(output_dir: str | Path) -> list[Path]:
         )
         scheduler = Scheduler(config)
         scheduler.timer.stop()
+        app_module.read_state = lambda _path: {
+            "last_observed": {},
+            "last_reported": {},
+            "pending": {},
+            "history": [],
+        }
+        cleanup.callback(setattr, app_module, "read_state", original_read_state)
         window = StatusWindow(scheduler)
+        cleanup.callback(_close_safely, window)
         history = [
             {
                 "time": "2026-01-01 09:00",
@@ -115,6 +136,7 @@ def capture_readme(output_dir: str | Path) -> list[Path]:
             menu.addAction(label)
         menu.addSeparator()
         menu.addAction("Quit")
+        cleanup.callback(_close_safely, menu)
         menu.ensurePolished()
         menu_path = output / "tray-menu.png"
         menu.grab().save(str(menu_path))
@@ -128,6 +150,7 @@ def capture_readme(output_dir: str | Path) -> list[Path]:
         strip.save(str(states_path))
         settings.setValue("setup/complete", True)
         wizard = SetupWizard(settings)
+        cleanup.callback(_close_safely, wizard)
         wizard.resize(640, 520)
         wizard.show()
         app.processEvents()
@@ -136,22 +159,12 @@ def capture_readme(output_dir: str | Path) -> list[Path]:
         wizard_path = output / "setup-wizard.png"
         wizard.grab().save(str(wizard_path))
         settings_dialog = SettingsDialog(settings)
+        cleanup.callback(_close_safely, settings_dialog)
         settings_dialog.resize(620, 460)
         settings_dialog.show()
         app.processEvents()
         settings_path = output / "settings-dialog.png"
         settings_dialog.grab().save(str(settings_path))
-        settings_dialog.close()
-        wizard.close()
-        window.close()
-        scheduler.timer.stop()
-        menu.close()
-        app_module.read_state = original_read_state
-        for key, value in previous_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
         return [status, pending_path, menu_path, states_path, settings_path, wizard_path]
 
 

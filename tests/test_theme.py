@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PyQt6.QtGui import QColor, QPalette
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from thunderwatch import theme, tokens
 
@@ -28,3 +28,17 @@ def test_theme_reapplies_palette_when_stylesheet_is_already_current() -> None:
     theme.apply_theme(app)
 
     assert app.palette().color(QPalette.ColorRole.Window) == QColor(tokens.SURFACE)
+
+
+def test_theme_applies_windows_title_bar_to_each_shown_window(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    themed = []
+    monkeypatch.setattr(theme, "_set_windows_dark_title_bar", themed.append)
+    theme.apply_theme(app)
+    window = QWidget()
+
+    window.show()
+    app.processEvents()
+
+    assert window in themed
+    window.close()

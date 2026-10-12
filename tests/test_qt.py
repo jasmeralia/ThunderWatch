@@ -79,6 +79,20 @@ def test_status_window_renders_synthetic_history(app, tmp_path, monkeypatch):
     scheduler.timer.stop()
 
 
+def test_tray_fallback_window_has_a_working_quit_button(app):
+    scheduler = Scheduler(Config())
+    quit_calls = []
+    window = StatusWindow(scheduler, on_quit=lambda: quit_calls.append(True))
+
+    window.set_tray_fallback("No system tray is available.")
+
+    assert not window.quit_button.isHidden()
+    window.quit_button.click()
+    assert quit_calls == [True]
+    scheduler.timer.stop()
+    window.close()
+
+
 def test_status_window_opens_the_active_log_directory(app, tmp_path, monkeypatch):
     from thunderwatch import app as app_module
 

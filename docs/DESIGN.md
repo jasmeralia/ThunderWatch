@@ -166,7 +166,8 @@ triggers an email and never overwrites the stored address.
    `QSystemTrayIcon.isSystemTrayAvailable()` for up to 60 s. If there is still no
    tray (for example GNOME without the AppIndicator extension), open the status
    window with a notice explaining that the window stands in for the tray, and keep
-   monitoring. Closing the window then minimizes instead of hiding.
+   monitoring. Closing the window then minimizes instead of hiding; a Quit button
+   exits the application.
 
 ### Setup wizard
 

@@ -4,14 +4,33 @@ from __future__ import annotations
 
 import os
 import tempfile
+from contextlib import ExitStack, suppress
 from pathlib import Path
+from typing import Any
+
+
+def _close_safely(widget: Any) -> None:
+    with suppress(RuntimeError):
+        widget.close()
 
 
 def capture_steps(output_dir: str | Path) -> list[Path]:
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=True)
     env_keys = ("HOME", "XDG_CONFIG_HOME", "QT_QPA_PLATFORM")
     previous_env = {key: os.environ.get(key) for key in env_keys}
+    try:
+        with ExitStack() as cleanup:
+            return _capture_steps(output_dir, cleanup)
+    finally:
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _capture_steps(output_dir: str | Path, cleanup: ExitStack) -> list[Path]:
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="thunderwatch-wizard-") as scratch:
         os.environ["HOME"] = scratch
         os.environ["XDG_CONFIG_HOME"] = str(Path(scratch) / "config")
@@ -27,6 +46,7 @@ def capture_steps(output_dir: str | Path) -> list[Path]:
         settings = QSettings(str(Path(scratch) / "synthetic.ini"), QSettings.Format.IniFormat)
         settings.setValue("setup/complete", True)
         wizard = SetupWizard(settings)
+        cleanup.callback(_close_safely, wizard)
         wizard.resize(640, 520)
         wizard.show()
         results = []
@@ -50,12 +70,6 @@ def capture_steps(output_dir: str | Path) -> list[Path]:
             path = output / name
             wizard.grab().save(str(path))
             results.append(path)
-        wizard.close()
-        for key, value in previous_env.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
         return results
 
 

@@ -6,6 +6,7 @@ import ctypes
 import sys
 from ctypes import wintypes
 
+from PyQt6.QtCore import QEvent, QObject
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -176,11 +177,27 @@ def _set_windows_dark_title_bar(window: QWidget) -> None:
         return
 
 
+class _WindowThemeFilter(QObject):
+    def eventFilter(self, watched: QObject | None, event: QEvent | None) -> bool:
+        if (
+            event is not None
+            and event.type() == QEvent.Type.Show
+            and isinstance(watched, QWidget)
+            and watched.isWindow()
+        ):
+            _set_windows_dark_title_bar(watched)
+        return super().eventFilter(watched, event)
+
+
 def apply_theme(app: QApplication, window: QWidget | None = None) -> None:
     """Apply GaleFling's dark palette and component styling."""
     if app.styleSheet() != GLOBAL_QSS:
         app.setStyle("Fusion")
         app.setStyleSheet(GLOBAL_QSS)
     _apply_palette(app)
+    if getattr(app, "_window_theme_filter", None) is None:
+        theme_filter = _WindowThemeFilter(app)
+        app.installEventFilter(theme_filter)
+        setattr(app, "_window_theme_filter", theme_filter)  # noqa: B010
     if window is not None:
         _set_windows_dark_title_bar(window)
