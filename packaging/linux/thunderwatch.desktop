@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ThunderWatch
+Comment=Monitor public IP address changes
+Exec=thunderwatch
+Icon=io.github.jasmeralia.ThunderWatch
+Terminal=false
+Categories=Utility;Network;
+StartupNotify=true

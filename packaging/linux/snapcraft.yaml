@@ -1,0 +1,24 @@
+name: thunderwatch
+base: core24
+version: '0.0.0'
+summary: Public IP address change monitor
+description: ThunderWatch emails confirmed public IP address changes.
+grade: devel
+confinement: strict
+platforms:
+  amd64:
+  arm64:
+apps:
+  thunderwatch:
+    command: usr/bin/thunderwatch
+    desktop: usr/share/applications/io.github.jasmeralia.ThunderWatch.desktop
+    plugs: [network, desktop, wayland, x11, password-manager-service]
+    autostart: thunderwatch.desktop
+parts:
+  app:
+    plugin: dump
+    source: .
+    organize:
+      dist/ThunderWatch: usr/bin/thunderwatch
+      packaging/linux/thunderwatch.desktop: usr/share/applications/io.github.jasmeralia.ThunderWatch.desktop
+      resources/icons/thunderwatch.png: usr/share/icons/hicolor/256x256/apps/io.github.jasmeralia.ThunderWatch.png
