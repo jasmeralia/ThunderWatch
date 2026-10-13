@@ -128,7 +128,7 @@ def test_lookup_uses_later_matching_provider_after_first_provider_fails():
 
     result = lookup("ipv4", fake, ("bad", "good", "later"), baseline="8.8.4.4")
     assert result.value == "8.8.4.4"
-    assert calls == ["bad", "good"]
+    assert calls == ["bad", "good", "later"]
 
 
 def test_lookup_falls_back_after_http_protocol_error():

@@ -1232,6 +1232,58 @@ def test_update_dialog_reports_download_failure_without_network(app):
     dialog.close()
 
 
+def test_update_dialog_keeps_worker_and_button_until_thread_stops(app, tmp_path, monkeypatch):
+    from thunderwatch import update_dialog
+    from thunderwatch.update_dialog import UpdateDialog
+    from thunderwatch.updater import ReleaseAsset, UpdateOffer
+
+    class Signal:
+        def __init__(self):
+            self.callbacks = []
+
+        def connect(self, callback):
+            self.callbacks.append(callback)
+
+        def emit(self, *args):
+            for callback in self.callbacks:
+                callback(*args)
+
+    class Worker:
+        def __init__(self, *_args):
+            self.completed = Signal()
+            self.finished = Signal()
+            self.running = False
+
+        def start(self):
+            self.running = True
+
+        def isRunning(self):
+            return self.running
+
+    offer = UpdateOffer(
+        "0.2.0",
+        False,
+        "notes",
+        "https://example.invalid/release",
+        ReleaseAsset("update.deb", "https://example.invalid/file", 10, "a" * 64),
+    )
+    monkeypatch.setattr(update_dialog, "app_data", lambda: tmp_path)
+    monkeypatch.setattr(update_dialog, "UpdateDownloadWorker", Worker)
+    dialog = UpdateDialog(offer)
+    dialog.download()
+    worker = dialog.worker
+
+    worker.completed.emit(False, "synthetic failure", None)
+
+    assert dialog.worker is worker
+    assert not dialog.download_button.isEnabled()
+    worker.running = False
+    worker.finished.emit()
+    assert dialog.worker is None
+    assert dialog.download_button.isEnabled()
+    dialog.close()
+
+
 def test_linux_package_download_gives_install_instructions(app, tmp_path, monkeypatch):
     from thunderwatch import update_dialog
     from thunderwatch.update_dialog import UpdateDialog
@@ -1344,6 +1396,7 @@ def test_update_dialog_removes_previous_artifacts_before_retry(app, tmp_path, mo
         def __init__(self, _offer, target):
             self.destination = target
             self.completed = Signal()
+            self.finished = Signal()
 
         def start(self):
             starts.append(self.destination)

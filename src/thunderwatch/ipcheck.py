@@ -79,8 +79,6 @@ def lookup(
     for url in urls:
         try:
             value = normalize(fetcher(url), family)
-            if not valid and value == baseline:
-                return LookupResult(family, value, (url,))
             valid.append((url, value))
         except (
             OSError,
@@ -103,10 +101,10 @@ def lookup(
     )
     if confirmed:
         return LookupResult(family, confirmed[0], tuple(confirmed[1][:2]))
+    if baseline in counts:
+        return LookupResult(family, baseline, (counts[baseline][0],))
     if len(counts) == 1:
         value, urls_for_value = next(iter(counts.items()))
-        if value == baseline:
-            return LookupResult(family, value, (urls_for_value[0],))
         return LookupResult(
             family, None, (urls_for_value[0],), "a second provider did not confirm the candidate"
         )

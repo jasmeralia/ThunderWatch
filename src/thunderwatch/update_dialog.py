@@ -164,11 +164,16 @@ class UpdateDialog(QDialog):
         self.status_label.setText("Downloading and verifying update…")
         self.worker = UpdateDownloadWorker(self.offer, destination)
         self.worker.completed.connect(self._downloaded)
+        self.worker.finished.connect(self._download_worker_stopped)
         self.worker.start()
+
+    @pyqtSlot()
+    def _download_worker_stopped(self) -> None:
+        self.worker = None
+        self.download_button.setEnabled(True)
 
     @pyqtSlot(bool, str, object)
     def _downloaded(self, success: bool, message: str, path: object) -> None:
-        self.download_button.setEnabled(True)
         if not success or not isinstance(path, Path):
             self.status_label.setText(f"Update failed: {message}")
             return

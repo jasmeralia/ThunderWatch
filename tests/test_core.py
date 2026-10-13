@@ -617,7 +617,7 @@ def test_test_email_worker_uses_injected_fake_services(monkeypatch):
     assert results == [(True, "accepted")]
 
 
-def test_first_provider_matching_baseline_is_enough_and_stops_fallback():
+def test_baseline_fallback_waits_for_all_providers():
     calls = []
     responses = {"first": "8.8.4.4", "second": "1.1.1.1"}
 
@@ -627,7 +627,16 @@ def test_first_provider_matching_baseline_is_enough_and_stops_fallback():
 
     result = lookup("ipv4", fake_fetch, ("first", "second"), baseline="8.8.4.4")
     assert result.value == "8.8.4.4"
-    assert calls == ["first"]
+    assert calls == ["first", "second"]
+
+
+def test_baseline_provider_cannot_mask_two_provider_change_consensus():
+    responses = {"first": "8.8.4.4", "second": "1.1.1.1", "third": "1.1.1.1"}
+
+    result = lookup("ipv4", responses.__getitem__, tuple(responses), baseline="8.8.4.4")
+
+    assert result.value == "1.1.1.1"
+    assert result.providers == ("second", "third")
 
 
 def test_smoke_objects_use_synthetic_config_without_reading_settings():
