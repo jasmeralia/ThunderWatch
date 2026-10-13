@@ -288,8 +288,11 @@ launches with `--autostart`.
 - **Flatpak:** request it through the XDG Background portal
   (`org.freedesktop.portal.Background.RequestBackground` with `autostart=true` and
   `commandline=["thunderwatch", "--autostart"]`), called over `QtDBus`. A desktop
-  file written inside the sandbox would not work. Keep the settings dialog open until
-  the asynchronous portal response arrives and show a denial on its Startup tab.
+  file written inside the sandbox would not work. The setup wizard and settings dialog
+  remain open until the asynchronous portal response arrives. A denial from Settings,
+  including one from **Run Setup Wizard Again**, stays visible on the Startup tab. The
+  first-run wizard uses the startup-owned portal client, so startup does not issue a
+  duplicate request after setup.
 - **Snap:** declare `autostart: thunderwatch.desktop` on the app in `snapcraft.yaml`.
   The app writes the desktop file to `$SNAP_USER_DATA/.config/autostart/`.
 
@@ -544,6 +547,8 @@ providers or SMTP servers.
   tray menu order and badge states, single-instance "show" handoff, the
   status-window close-to-tray behavior, and the settings save re-registering
   autostart.
+- **Windows UI:** show a native Qt top-level window and require DWM to accept the dark
+  title-bar attribute; run this integration check on a Windows runner.
 - **`release_info.py`:** port TempestTrace's tests.
 
 ## Delivery stages

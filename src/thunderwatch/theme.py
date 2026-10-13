@@ -160,21 +160,32 @@ def _apply_palette(app: QApplication) -> None:
     app.setPalette(palette)
 
 
-def _set_windows_dark_title_bar(window: QWidget) -> None:
+def _set_windows_dark_title_bar(window: QWidget) -> bool:
     if sys.platform != "win32":
-        return
+        return False
     try:
         value = wintypes.BOOL(1)
         dwmapi = ctypes.WinDLL("dwmapi", use_last_error=True)
+        set_attribute = dwmapi.DwmSetWindowAttribute
+        set_attribute.argtypes = [
+            wintypes.HWND,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        set_attribute.restype = ctypes.c_long
         for attribute in (20, 19):
-            dwmapi.DwmSetWindowAttribute(
+            result = set_attribute(
                 wintypes.HWND(int(window.winId())),
                 wintypes.DWORD(attribute),
                 ctypes.byref(value),
                 ctypes.sizeof(value),
             )
+            if result == 0:
+                return True
     except Exception:
-        return
+        return False
+    return False
 
 
 class _WindowThemeFilter(QObject):

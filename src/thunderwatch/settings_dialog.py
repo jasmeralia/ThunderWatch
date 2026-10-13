@@ -212,9 +212,15 @@ class SettingsDialog(QDialog):
         if self.scheduler:
             self.scheduler.pause_and_wait()
         try:
-            wizard = SetupWizard(self.settings)
+            wizard = SetupWizard(self.settings, portal_client=self.portal_client)
             if wizard.exec() == QDialog.DialogCode.Accepted:
-                self.accept()
+                if wizard.portal_error:
+                    self.startup_notice.setText(
+                        f"Settings were saved, but automatic startup failed: {wizard.portal_error}"
+                    )
+                    self.tabs.setCurrentWidget(self.startup_tab)
+                else:
+                    self.accept()
         finally:
             if self.scheduler:
                 self.scheduler.resume()

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+
+import pytest
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication, QWidget
 
@@ -42,3 +45,51 @@ def test_theme_applies_windows_title_bar_to_each_shown_window(monkeypatch):
 
     assert window in themed
     window.close()
+
+
+def test_windows_title_bar_falls_back_when_modern_dwm_attribute_is_unsupported(monkeypatch):
+    app = QApplication.instance() or QApplication([])
+    calls = []
+
+    class NativeFunction:
+        argtypes = None
+        restype = None
+
+        def __call__(self, hwnd, attribute, value, size):
+            calls.append((hwnd, attribute, value, size))
+            return -1 if attribute.value == 20 else 0
+
+    class DwmApi:
+        DwmSetWindowAttribute = NativeFunction()
+
+    monkeypatch.setattr(theme.sys, "platform", "win32")
+    monkeypatch.setattr(theme.ctypes, "WinDLL", lambda *_args, **_kwargs: DwmApi(), raising=False)
+    window = QWidget()
+
+    assert theme._set_windows_dark_title_bar(window)
+    assert [call[1].value for call in calls] == [20, 19]
+    assert all(call[3] == theme.ctypes.sizeof(theme.wintypes.BOOL) for call in calls)
+    assert DwmApi.DwmSetWindowAttribute.argtypes == [
+        theme.wintypes.HWND,
+        theme.wintypes.DWORD,
+        theme.ctypes.c_void_p,
+        theme.wintypes.DWORD,
+    ]
+    window.close()
+    del app
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="requires the Windows DWM and native HWND")
+def test_windows_dwm_accepts_dark_title_bar_for_a_shown_qt_window():
+    app = QApplication.instance() or QApplication([])
+    theme.apply_theme(app)
+    window = QWidget()
+    window.show()
+    app.processEvents()
+
+    try:
+        assert window.isVisible()
+        assert int(window.winId()) != 0
+        assert theme._set_windows_dark_title_bar(window)
+    finally:
+        window.close()

@@ -79,6 +79,54 @@ def test_status_window_renders_synthetic_history(app, tmp_path, monkeypatch):
     scheduler.timer.stop()
 
 
+def test_stopped_test_email_thread_blocks_relaunch_until_cleanup(app, monkeypatch):
+    from thunderwatch import app as app_module
+
+    class StoppedThread:
+        def isRunning(self):
+            return False
+
+    original = StoppedThread()
+    runtime = app_module.ThunderWatchApp.__new__(app_module.ThunderWatchApp)
+    runtime.app = app
+    runtime._test_thread = original
+    runtime.settings = QSettings("ThunderWatchTests", "StoppedTestWorker")
+
+    def unexpected_thread(*_args):
+        pytest.fail("a replacement test-email thread was started before cleanup")
+
+    monkeypatch.setattr(app_module, "QThread", unexpected_thread)
+
+    runtime.send_test_email()
+
+    assert runtime._test_thread is original
+
+
+def test_stopped_update_thread_blocks_relaunch_until_cleanup(app, monkeypatch):
+    from thunderwatch import app as app_module
+
+    class StoppedThread:
+        def isRunning(self):
+            return False
+
+    original = StoppedThread()
+    runtime = app_module.ThunderWatchApp.__new__(app_module.ThunderWatchApp)
+    runtime.app = app
+    runtime._update_thread = original
+    runtime._update_manual = False
+    runtime.settings = QSettings("ThunderWatchTests", "StoppedUpdateWorker")
+
+    def unexpected_thread(*_args):
+        pytest.fail("a replacement update thread was started before cleanup")
+
+    monkeypatch.setattr(app_module, "QThread", unexpected_thread)
+
+    runtime.check_for_updates(manual=True)
+
+    assert runtime._update_thread is original
+    assert runtime._update_manual
+
+
 def test_tray_fallback_window_has_a_working_quit_button(app):
     scheduler = Scheduler(Config())
     quit_calls = []
@@ -212,12 +260,103 @@ def test_rerun_wizard_reapplies_saved_autostart_setting(app, monkeypatch):
     wizard.recipient.setText("you@example.com")
     applied = []
 
-    def set_autostart(enabled):
+    def set_autostart(enabled, **_kwargs):
         applied.append(enabled)
 
     monkeypatch.setattr(wizard_module, "set_autostart", set_autostart, raising=False)
     wizard.accept()
     assert applied == [False]
+
+
+def test_setup_wizard_stays_open_until_flatpak_portal_responds(app, monkeypatch):
+    from PyQt6.QtCore import QObject, pyqtSignal
+
+    class PortalStub(QObject):
+        request_failed = pyqtSignal(str)
+        request_completed = pyqtSignal()
+
+        def request_background(self, options):
+            self.options = options
+
+    monkeypatch.setenv("FLATPAK_ID", "io.github.jasmeralia.ThunderWatch")
+    settings = QSettings("ThunderWatchTests", "WizardPortalWait")
+    settings.clear()
+    for key, value in {
+        "setup/complete": True,
+        "smtp/host": "smtp.example.com",
+        "smtp/username": "alerts@example.com",
+        "smtp/from": "alerts@example.com",
+        "smtp/recipient": "you@example.com",
+        "startup/autostart": True,
+    }.items():
+        settings.setValue(key, value)
+    portal = PortalStub()
+    wizard = SetupWizard(settings, portal_client=portal)
+    wizard.save_offline.setChecked(True)
+
+    wizard.accept()
+
+    assert wizard.result() == QDialog.DialogCode.Rejected
+    assert wizard.portal_waiting
+    assert portal.options == {
+        "autostart": True,
+        "commandline": ["thunderwatch", "--autostart"],
+    }
+    wizard.reject()
+    wizard.close()
+    assert wizard.result() == QDialog.DialogCode.Rejected
+
+    portal.request_completed.emit()
+
+    assert wizard.result() == QDialog.DialogCode.Accepted
+    assert not wizard.portal_waiting
+    wizard.close()
+
+
+def test_settings_rerun_wizard_shows_flatpak_denial_without_closing(app, monkeypatch):
+    from PyQt6.QtCore import QObject, pyqtSignal
+    from PyQt6.QtWidgets import QDialog
+
+    from thunderwatch.settings_dialog import SettingsDialog
+    from thunderwatch.wizard import SetupWizard
+
+    class PortalStub(QObject):
+        request_failed = pyqtSignal(str)
+        request_completed = pyqtSignal()
+
+        def request_background(self, _options):
+            pass
+
+    monkeypatch.setenv("FLATPAK_ID", "io.github.jasmeralia.ThunderWatch")
+    settings = QSettings("ThunderWatchTests", "SettingsWizardPortalDenial")
+    settings.clear()
+    for key, value in {
+        "setup/complete": True,
+        "smtp/host": "smtp.example.com",
+        "smtp/username": "alerts@example.com",
+        "smtp/from": "alerts@example.com",
+        "smtp/recipient": "you@example.com",
+        "startup/autostart": True,
+    }.items():
+        settings.setValue(key, value)
+    portal = PortalStub()
+    dialog = SettingsDialog(settings, portal_client=portal)
+
+    def run_wizard(self):
+        self.save_offline.setChecked(True)
+        self.accept()
+        assert self.portal_waiting
+        portal.request_failed.emit("The desktop portal denied automatic startup.")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(SetupWizard, "exec", run_wizard)
+
+    dialog._run_wizard()
+
+    assert dialog.result() == QDialog.DialogCode.Rejected
+    assert "denied automatic startup" in dialog.startup_notice.text().casefold()
+    assert dialog.tabs.currentWidget() is dialog.startup_tab
+    dialog.close()
 
 
 def test_rerun_wizard_requires_password_when_smtp_identity_changes(app, monkeypatch):
@@ -500,7 +639,7 @@ def test_settings_blocks_wizard_and_closure_while_portal_request_is_pending(app,
     wizard_calls = []
 
     class WizardStub:
-        def __init__(self, _settings):
+        def __init__(self, _settings, **_kwargs):
             wizard_calls.append("created")
 
         def exec(self):
@@ -541,7 +680,7 @@ def test_settings_blocks_wizard_while_email_test_thread_is_running(app, monkeypa
     wizard_calls = []
 
     class WizardStub:
-        def __init__(self, _settings):
+        def __init__(self, _settings, **_kwargs):
             wizard_calls.append("created")
 
         def exec(self):
@@ -595,7 +734,7 @@ def test_wizard_retest_clears_pending_change_already_reported_by_test_email(app,
     }
     monkeypatch.setattr(wizard_module, "read_state", lambda _path: state)
     monkeypatch.setattr(wizard_module, "write_state", lambda _path, updated: state.update(updated))
-    monkeypatch.setattr(wizard_module, "set_autostart", lambda *_args: None)
+    monkeypatch.setattr(wizard_module, "set_autostart", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(wizard_module, "state_path", lambda: Path("synthetic-state.json"))
     wizard.accept()
     assert state["last_reported"]["ipv4"]["value"] == "198.51.100.5"
@@ -619,7 +758,7 @@ def test_rerun_wizard_pauses_scheduler_until_state_update_finishes(app, monkeypa
             events.append("resume")
 
     class WizardStub:
-        def __init__(self, _settings):
+        def __init__(self, _settings, **_kwargs):
             pass
 
         def exec(self):
@@ -994,7 +1133,7 @@ def test_desktop_shell_builds_tray_and_routes_without_setup(app, monkeypatch):
 
     monkeypatch.setattr(app_module, "QSettings", Settings)
     monkeypatch.setattr(app_module, "QLocalServer", Server)
-    monkeypatch.setattr(app_module, "set_autostart", lambda *args: None)
+    monkeypatch.setattr(app_module, "set_autostart", lambda *args, **_kwargs: None)
     monkeypatch.setattr(app_module, "read_state", lambda _path: empty_state())
     monkeypatch.setattr(
         app_module.QSystemTrayIcon, "isSystemTrayAvailable", staticmethod(lambda: True)

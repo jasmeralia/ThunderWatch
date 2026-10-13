@@ -380,21 +380,26 @@ class ThunderWatchApp:
                 QTimer.singleShot(0, app.quit)
                 return
         self.server.newConnection.connect(self.show_status)
-        if should_setup(self.settings):
-            wizard = SetupWizard(self.settings)
-            if wizard.exec() != wizard.DialogCode.Accepted:
-                QTimer.singleShot(0, app.quit)
-                return
-        config = Config.from_store(self.settings)
-        self.scheduler = Scheduler(config)
         self._background_portal = QtBackgroundPortal() if os.environ.get("FLATPAK_ID") else None
         if self._background_portal:
             self._background_portal.request_failed.connect(self._background_portal_failed)
-        try:
-            set_autostart(config.autostart, portal_client=self._background_portal)
-        except Exception as exc:
-            logger.exception("Could not configure automatic startup")
-            self._autostart_error = str(exc)
+        autostart_applied = False
+        if should_setup(self.settings):
+            wizard = SetupWizard(self.settings, portal_client=self._background_portal)
+            if wizard.exec() != wizard.DialogCode.Accepted:
+                QTimer.singleShot(0, app.quit)
+                return
+            autostart_applied = wizard.autostart_applied
+            if wizard.portal_error:
+                self._autostart_error = wizard.portal_error
+        config = Config.from_store(self.settings)
+        self.scheduler = Scheduler(config)
+        if not autostart_applied:
+            try:
+                set_autostart(config.autostart, portal_client=self._background_portal)
+            except Exception as exc:
+                logger.exception("Could not configure automatic startup")
+                self._autostart_error = str(exc)
         icon = resource_path("icons/thunderwatch.png")
         self.tray = QSystemTrayIcon(QIcon(str(icon)), app)
         menu = QMenu()
@@ -481,7 +486,7 @@ class ThunderWatchApp:
             self.window.copy_ip()
 
     def send_test_email(self, *args: object) -> None:
-        if self._test_thread and self._test_thread.isRunning():
+        if self._test_thread is not None:
             return
         config = Config.from_store(self.settings)
         thread = QThread(self.app)
@@ -515,7 +520,7 @@ class ThunderWatchApp:
             )
 
     def check_for_updates(self, manual: bool = True) -> None:
-        if self._update_thread and self._update_thread.isRunning():
+        if self._update_thread is not None:
             self._update_manual = self._update_manual or manual
             return
         self._update_manual = manual

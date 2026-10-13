@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import socket
 
-from PyQt6.QtCore import QSettings, QThread
+from PyQt6.QtCore import QSettings, QThread, pyqtSlot
 from PyQt6.QtGui import QCloseEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
     QWizardPage,
 )
 
-from .autostart import set_autostart
+from .autostart import BackgroundPortal, set_autostart
 from .config import Config, smtp_identity_changed
 from .monitor import _stamp
 from .paths import password_path, state_path
@@ -32,9 +32,20 @@ logger = logging.getLogger(__name__)
 
 
 class SetupWizard(QWizard):
-    def __init__(self, settings: QSettings):  # noqa: PLR0915
+    def __init__(self, settings: QSettings, portal_client: BackgroundPortal | None = None):  # noqa: PLR0915
         super().__init__()
         self.settings = settings
+        self.portal_client = portal_client
+        self.portal_waiting = False
+        self.portal_error = ""
+        self.autostart_applied = False
+        if self.portal_client:
+            request_failed = getattr(self.portal_client, "request_failed", None)
+            request_completed = getattr(self.portal_client, "request_completed", None)
+            if request_failed is not None:
+                request_failed.connect(self._portal_request_failed)
+            if request_completed is not None:
+                request_completed.connect(self._portal_request_completed)
         config = Config.from_store(settings)
         self.setWindowTitle("ThunderWatch setup")
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
@@ -214,7 +225,7 @@ class SetupWizard(QWizard):
     def closeEvent(self, event: QCloseEvent | None) -> None:
         if event is None:
             return
-        if self._test_thread and self._test_thread.isRunning():
+        if (self._test_thread and self._test_thread.isRunning()) or self.portal_waiting:
             event.ignore()
             return
         super().closeEvent(event)
@@ -231,7 +242,7 @@ class SetupWizard(QWizard):
         self._update_finish_button()
 
     def reject(self) -> None:
-        if self._test_thread and self._test_thread.isRunning():
+        if (self._test_thread and self._test_thread.isRunning()) or self.portal_waiting:
             return
         if not self.settings.value("setup/complete", False):
             answer = QMessageBox.question(
@@ -244,6 +255,24 @@ class SetupWizard(QWizard):
             if answer != QMessageBox.StandardButton.Yes:
                 return
         super().reject()
+
+    @pyqtSlot(str)
+    def _portal_request_failed(self, message: str) -> None:
+        if not self.portal_waiting:
+            return
+        self.portal_waiting = False
+        self.portal_error = message
+        self._finish_after_portal()
+
+    @pyqtSlot()
+    def _portal_request_completed(self) -> None:
+        if self.portal_waiting:
+            self.portal_waiting = False
+            self._finish_after_portal()
+
+    def _finish_after_portal(self) -> None:
+        self._update_finish_button()
+        super().accept()
 
     @staticmethod
     def _page(title: str, subtitle: str) -> QWizardPage:
@@ -264,8 +293,8 @@ class SetupWizard(QWizard):
             self.port.setValue(port)
             self.security.setCurrentText(security)
 
-    def accept(self) -> None:  # noqa: PLR0912
-        if self._test_thread and self._test_thread.isRunning():
+    def accept(self) -> None:  # noqa: PLR0911, PLR0912
+        if self.portal_waiting or (self._test_thread and self._test_thread.isRunning()):
             return
         if not all(
             x.text().strip() for x in (self.host, self.username, self.sender_edit, self.recipient)
@@ -337,11 +366,6 @@ class SetupWizard(QWizard):
                 return
         for key, value in values.items():
             self.settings.setValue(key, value)
-        try:
-            set_autostart(self.autostart.isChecked())
-        except Exception as exc:
-            logger.exception("Could not configure automatic startup from setup wizard")
-            QMessageBox.warning(self, "Startup registration", str(exc))
         if self.test_succeeded and self.test_addresses:
             state = read_state(state_path())
             timestamp = _stamp(__import__("datetime").datetime.now().astimezone())
@@ -356,4 +380,18 @@ class SetupWizard(QWizard):
             if pending and not changes:
                 state["pending"] = {}
             write_state(state_path(), state)
+        self.portal_waiting = self.portal_client is not None
+        try:
+            set_autostart(self.autostart.isChecked(), portal_client=self.portal_client)
+        except Exception as exc:
+            self.portal_waiting = False
+            logger.exception("Could not configure automatic startup from setup wizard")
+            QMessageBox.warning(self, "Startup registration", str(exc))
+            if self.portal_client:
+                return
+        else:
+            self.autostart_applied = True
+            if self.portal_client:
+                self._update_finish_button()
+                return
         super().accept()
